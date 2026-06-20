@@ -1,0 +1,31 @@
+# OS
+.DS_Store
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Go
+/server-go/bin/
+/server-go/*.test
+
+# Python
+/agent-python/.venv/
+/agent-python/__pycache__/
+/agent-python/.pytest_cache/
+*.pyc
+
+# Env/secrets
+.env
+*.pem
+*.key
+
+# Kubernetes local files
+kubeconfig
