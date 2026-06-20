@@ -1,17 +1,11 @@
-variable "aws_region" {
-  description = "AWS region to deploy resources into"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "cluster_name" {
-  description = "Name of the EKS cluster"
+variable "minikube_profile" {
+  description = "Minikube profile and Kubernetes context used for local Nova-SRE infrastructure"
   type        = string
   default     = "nova-sre"
 }
 
 variable "environment" {
-  description = "Deployment environment (dev, staging, prod)"
+  description = "Local deployment environment label"
   type        = string
-  default     = "dev"
+  default     = "local"
 }

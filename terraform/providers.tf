@@ -16,12 +16,12 @@ terraform {
 
 provider "kubernetes" {
   config_path    = "~/.kube/config"
-  config_context = "nova-sre"
+  config_context = var.minikube_profile
 }
 
 provider "helm" {
   kubernetes = {
     config_path    = "~/.kube/config"
-    config_context = "nova-sre"
+    config_context = var.minikube_profile
   }
 }
