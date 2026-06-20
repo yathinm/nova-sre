@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nova-sre-server
+  namespace: nova-sre
+  labels:
+    app: nova-sre-server
+spec:
+  selector:
+    app: nova-sre-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
