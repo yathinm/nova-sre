@@ -1,0 +1,8 @@
+# Helm values for Grafana
+# Populated during infrastructure provisioning phase.
+adminPassword: ""
+service:
+  type: ClusterIP
+persistence:
+  enabled: true
+  size: 5Gi

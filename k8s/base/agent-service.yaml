@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nova-sre-agent
+  namespace: nova-sre
+  labels:
+    app: nova-sre-agent
+spec:
+  selector:
+    app: nova-sre-agent
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP
