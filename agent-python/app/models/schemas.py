@@ -6,10 +6,16 @@ class DiagnosisState(BaseModel):
     repo: str
     sha: str
     logs: str = ""
+    github_owner: str | None = None
+    github_repo: str | None = None
+    github_pr_number: int | None = None
     parsed_logs: list[str] = Field(default_factory=list)
     error_summary: str = ""
     diagnosis: str = ""
     pr_comment: str = ""
+    github_comment_posted: bool = False
+    github_comment_url: str | None = None
+    github_comment_error: str | None = None
 
 
 class DiagnosisRequest(BaseModel):
@@ -17,6 +23,10 @@ class DiagnosisRequest(BaseModel):
     repo: str = Field(..., min_length=1)
     sha: str = Field(..., min_length=1)
     logs: str = ""
+    github_owner: str | None = Field(default=None, min_length=1)
+    github_repo: str | None = Field(default=None, min_length=1)
+    github_pr_number: int | None = Field(default=None, gt=0)
+    post_github_comment: bool = False
 
 
 class DiagnosisResponse(BaseModel):
@@ -25,3 +35,9 @@ class DiagnosisResponse(BaseModel):
     sha: str
     diagnosis: str
     pr_comment: str
+    github_owner: str | None = None
+    github_repo: str | None = None
+    github_pr_number: int | None = None
+    github_comment_posted: bool = False
+    github_comment_url: str | None = None
+    github_comment_error: str | None = None

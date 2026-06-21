@@ -19,6 +19,17 @@ spec:
         - name: agent
           image: nova-sre-agent:local
           imagePullPolicy: Never
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: OPENAI_API_KEY
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: GITHUB_TOKEN
           ports:
             - containerPort: 8000
           readinessProbe:
