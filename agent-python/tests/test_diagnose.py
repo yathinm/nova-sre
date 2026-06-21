@@ -3,7 +3,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.clients.github_comments import GitHubPullRequestCommentClient
-from app.graph.diagnosis_graph import validate_pr_comment
+from app.graph.diagnosis_graph import (
+    build_graph,
+    classify_failure,
+    generate_proposed_fix,
+    validate_markdown,
+    validate_pr_comment,
+)
 from app.main import app, github_comment_client
 from app.models.schemas import DiagnosisState
 
@@ -26,6 +32,8 @@ def test_diagnose_endpoint_returns_markdown_comment_with_log_block() -> None:
     assert body["run_id"] == "run-123"
     assert "database connection failed" in body["diagnosis"]
     assert "## Nova-SRE diagnosis" in body["pr_comment"]
+    assert "### Root cause summary" in body["pr_comment"]
+    assert "### Proposed fix" in body["pr_comment"]
     assert "```log" in body["pr_comment"]
     assert "ERROR database connection failed" in body["pr_comment"]
     assert body["github_comment_posted"] is False
@@ -83,6 +91,78 @@ def test_validate_pr_comment_appends_safe_fallback_when_block_is_missing() -> No
 
     assert "A markdown comment without a fenced block." in result["pr_comment"]
     assert "```log\nNo log excerpt was available for this diagnosis.\n```" in result["pr_comment"]
+
+
+def test_classify_failure_detects_dependency_failures() -> None:
+    result = classify_failure(
+        DiagnosisState(
+            run_id="run-deps",
+            repo="acme/nova",
+            sha="abcdeps",
+            parsed_logs=["ERROR Module not found: app.internal.client"],
+        )
+    )
+
+    assert result["failure_classification"] == "dependency_failure"
+
+
+def test_generate_proposed_fix_uses_deterministic_fallback(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_ENABLE_LLM", "false")
+
+    result = generate_proposed_fix(
+        DiagnosisState(
+            run_id="run-auth",
+            repo="acme/nova",
+            sha="abcauth",
+            failure_classification="auth_failure",
+        )
+    )
+
+    assert result["llm_used"] is False
+    assert "token scope" in result["proposed_fix"]
+
+
+def test_validate_markdown_marks_complete_comment_valid() -> None:
+    result = validate_markdown(
+        DiagnosisState(
+            run_id="run-md",
+            repo="acme/nova",
+            sha="abcmd",
+            pr_comment=(
+                "## Nova-SRE diagnosis\n\n"
+                "### Root cause summary\n\n"
+                "A runtime exception is causing the failure.\n\n"
+                "### Proposed fix\n\n"
+                "Reproduce locally.\n\n"
+                "```log\nERROR traceback\n```"
+            ),
+        )
+    )
+
+    assert result["markdown_valid"] is True
+    assert result["markdown_validation_errors"] == []
+
+
+def test_graph_retains_offline_fallback_for_unknown_logs(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("NOVA_SRE_ENABLE_LLM", "true")
+
+    graph = build_graph()
+    result = DiagnosisState.model_validate(
+        graph.invoke(
+            {
+                "run_id": "run-unknown",
+                "repo": "acme/nova",
+                "sha": "abcunknown",
+                "logs": "starting\nall quiet\nfinished",
+            }
+        )
+    )
+
+    assert result.failure_classification == "unknown"
+    assert result.llm_used is False
+    assert "Collect a fuller log excerpt" in result.proposed_fix
+    assert result.markdown_valid is True
 
 
 def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> None:

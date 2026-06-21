@@ -10,9 +10,16 @@ class DiagnosisState(BaseModel):
     github_repo: str | None = None
     github_pr_number: int | None = None
     parsed_logs: list[str] = Field(default_factory=list)
+    log_excerpt: str = ""
+    failure_classification: str = "unknown"
     error_summary: str = ""
+    root_cause_summary: str = ""
+    proposed_fix: str = ""
     diagnosis: str = ""
     pr_comment: str = ""
+    markdown_valid: bool = False
+    markdown_validation_errors: list[str] = Field(default_factory=list)
+    llm_used: bool = False
     github_comment_posted: bool = False
     github_comment_url: str | None = None
     github_comment_error: str | None = None
