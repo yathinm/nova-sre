@@ -2,12 +2,18 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
@@ -139,6 +145,149 @@ func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	assertContainerEnv(t, creator.created, "GITHUB_SHA", "abc")
 }
 
+func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
+	agent := &recordingAgent{}
+	runner := JobRunner{
+		Watcher: &recordingWatcher{
+			result: JobResult{
+				Failed:  true,
+				Reason:  "BackoffLimitExceeded",
+				Message: "runner exited 1",
+			},
+		},
+		LogCollector: &recordingLogCollector{
+			logs: []LogEntry{{
+				Pod:       "nova-sre-pod",
+				Container: "runner",
+				Logs:      "panic: missing config",
+			}},
+		},
+		Agent: agent,
+		Now: func() time.Time {
+			return time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+		},
+		Logger: log.New(io.Discard, "", 0),
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "runner-jobs",
+			Name:      "nova-sre-push-abc123",
+		},
+	}
+
+	runner.runFailureCallback(context.Background(), job, Event{
+		DeliveryID: "delivery-123",
+		Type:       "pull_request",
+		Body: []byte(`{
+			"repository": {"full_name": "acme/widgets"},
+			"pull_request": {
+				"number": 42,
+				"html_url": "https://github.com/acme/widgets/pull/42",
+				"head": {"sha": "abcdef", "ref": "feature/logs", "repo": {"full_name": "acme/widgets"}},
+				"base": {"ref": "main"}
+			}
+		}`),
+	})
+
+	if !agent.called {
+		t.Fatal("expected agent to be called")
+	}
+	if agent.request.Repository != "acme/widgets" {
+		t.Fatalf("expected repository metadata, got %q", agent.request.Repository)
+	}
+	if agent.request.SHA != "abcdef" {
+		t.Fatalf("expected SHA metadata, got %q", agent.request.SHA)
+	}
+	if agent.request.PullRequest.Number != 42 {
+		t.Fatalf("expected PR number 42, got %d", agent.request.PullRequest.Number)
+	}
+	if agent.request.PullRequest.Head != "feature/logs" || agent.request.PullRequest.Base != "main" {
+		t.Fatalf("unexpected PR refs: %#v", agent.request.PullRequest)
+	}
+	if len(agent.request.Logs) != 1 || agent.request.Logs[0].Logs != "panic: missing config" {
+		t.Fatalf("expected collected logs, got %#v", agent.request.Logs)
+	}
+	if agent.request.Reason != "BackoffLimitExceeded" || agent.request.Message != "runner exited 1" {
+		t.Fatalf("expected failure details, got reason=%q message=%q", agent.request.Reason, agent.request.Message)
+	}
+}
+
+func TestJobRunnerSkipsAgentForSuccessfulJob(t *testing.T) {
+	agent := &recordingAgent{}
+	runner := JobRunner{
+		Watcher:      &recordingWatcher{result: JobResult{Succeeded: true}},
+		LogCollector: &recordingLogCollector{logs: []LogEntry{{Logs: "unused"}}},
+		Agent:        agent,
+		Logger:       log.New(io.Discard, "", 0),
+	}
+
+	runner.runFailureCallback(context.Background(), &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "runner-jobs", Name: "successful-job"},
+	}, Event{DeliveryID: "delivery-123", Type: "push", Body: []byte(`{}`)})
+
+	if agent.called {
+		t.Fatal("did not expect agent call for successful job")
+	}
+}
+
+func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
+	agent := &recordingAgent{err: errors.New("agent unavailable")}
+	runner := JobRunner{
+		Watcher:      &recordingWatcher{result: JobResult{Failed: true}},
+		LogCollector: &recordingLogCollector{logs: []LogEntry{{Logs: "failed"}}},
+		Agent:        agent,
+		Logger:       log.New(io.Discard, "", 0),
+	}
+
+	runner.runFailureCallback(context.Background(), &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "runner-jobs", Name: "failed-job"},
+	}, Event{DeliveryID: "delivery-123", Type: "push", Body: []byte(`{}`)})
+
+	if !agent.called {
+		t.Fatal("expected best-effort agent call")
+	}
+}
+
+func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
+	var got DiagnoseRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/diagnose" {
+			t.Fatalf("expected /diagnose path, got %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPAgentClient(server.URL, time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPAgentClient returned error: %v", err)
+	}
+
+	err = client.Diagnose(context.Background(), DiagnoseRequest{
+		DeliveryID: "delivery-123",
+		Event:      "push",
+		Repository: "acme/widgets",
+		SHA:        "abcdef",
+		Logs:       []LogEntry{{Pod: "pod-1", Container: "runner", Logs: "boom"}},
+	})
+	if err != nil {
+		t.Fatalf("Diagnose returned error: %v", err)
+	}
+
+	if got.Repository != "acme/widgets" || got.SHA != "abcdef" {
+		t.Fatalf("expected request metadata, got %#v", got)
+	}
+	if len(got.Logs) != 1 || got.Logs[0].Logs != "boom" {
+		t.Fatalf("expected request logs, got %#v", got.Logs)
+	}
+}
+
 type recordingCreator struct {
 	created *batchv1.Job
 }
@@ -148,6 +297,36 @@ func (c *recordingCreator) Create(_ context.Context, job *batchv1.Job) (*batchv1
 	created := job.DeepCopy()
 	created.Name = created.GenerateName + "abc123"
 	return created, nil
+}
+
+type recordingWatcher struct {
+	result JobResult
+	err    error
+}
+
+func (w *recordingWatcher) WaitForCompletion(_ context.Context, _ string, _ string) (JobResult, error) {
+	return w.result, w.err
+}
+
+type recordingLogCollector struct {
+	logs []LogEntry
+	err  error
+}
+
+func (c *recordingLogCollector) CollectJobLogs(_ context.Context, _ string, _ string) ([]LogEntry, error) {
+	return c.logs, c.err
+}
+
+type recordingAgent struct {
+	called  bool
+	request DiagnoseRequest
+	err     error
+}
+
+func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) error {
+	a.called = true
+	a.request = request
+	return a.err
 }
 
 func assertContainerEnv(t *testing.T, job *batchv1.Job, name string, want string) {

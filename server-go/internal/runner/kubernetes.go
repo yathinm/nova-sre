@@ -21,17 +21,26 @@ type KubernetesConfigLoader struct {
 }
 
 func KubernetesJobCreatorFromEnv(config JobConfig, getenv func(string) string) (KubernetesJobCreator, string, error) {
-	restConfig, source, err := KubernetesRESTConfigFromEnv(getenv)
+	clientset, source, err := KubernetesClientsetFromEnv(getenv)
 	if err != nil {
 		return KubernetesJobCreator{}, source, err
 	}
 
-	clientset, err := kubernetes.NewForConfig(restConfig)
+	return NewKubernetesJobCreator(config, clientset.BatchV1()), source, nil
+}
+
+func KubernetesClientsetFromEnv(getenv func(string) string) (*kubernetes.Clientset, string, error) {
+	restConfig, source, err := KubernetesRESTConfigFromEnv(getenv)
 	if err != nil {
-		return KubernetesJobCreator{}, source, fmt.Errorf("create Kubernetes clientset: %w", err)
+		return nil, source, err
 	}
 
-	return NewKubernetesJobCreator(config, clientset.BatchV1()), source, nil
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, source, fmt.Errorf("create Kubernetes clientset: %w", err)
+	}
+
+	return clientset, source, nil
 }
 
 func KubernetesRESTConfigFromEnv(getenv func(string) string) (*rest.Config, string, error) {

@@ -1,21 +1,28 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	batchtypedv1 "k8s.io/client-go/kubernetes/typed/batch/v1"
+	coretypedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 const (
@@ -23,6 +30,9 @@ const (
 	defaultTTL       = int32(3600)
 	defaultBackoff   = int32(0)
 	defaultImage     = "alpine:3.20"
+	defaultPoll      = 2 * time.Second
+	defaultCallback  = 5 * time.Minute
+	defaultAgentWait = 10 * time.Second
 )
 
 var dnsLabelPattern = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -48,6 +58,54 @@ type JobCreator interface {
 	Create(ctx context.Context, job *batchv1.Job) (*batchv1.Job, error)
 }
 
+type JobWatcher interface {
+	WaitForCompletion(ctx context.Context, namespace string, name string) (JobResult, error)
+}
+
+type JobLogCollector interface {
+	CollectJobLogs(ctx context.Context, namespace string, jobName string) ([]LogEntry, error)
+}
+
+type AgentClient interface {
+	Diagnose(ctx context.Context, request DiagnoseRequest) error
+}
+
+type JobResult struct {
+	Failed    bool
+	Succeeded bool
+	Reason    string
+	Message   string
+}
+
+type LogEntry struct {
+	Pod       string `json:"pod"`
+	Container string `json:"container"`
+	Logs      string `json:"logs,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type PullRequestMetadata struct {
+	Number int    `json:"number,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Head   string `json:"head,omitempty"`
+	Base   string `json:"base,omitempty"`
+}
+
+type DiagnoseRequest struct {
+	DeliveryID   string              `json:"delivery_id"`
+	Event        string              `json:"event"`
+	Repository   string              `json:"repository,omitempty"`
+	SHA          string              `json:"sha,omitempty"`
+	JobName      string              `json:"job_name"`
+	Namespace    string              `json:"namespace"`
+	Reason       string              `json:"reason,omitempty"`
+	Message      string              `json:"message,omitempty"`
+	PullRequest  PullRequestMetadata `json:"pull_request,omitempty"`
+	Logs         []LogEntry          `json:"logs"`
+	WebhookBody  json.RawMessage     `json:"webhook_body,omitempty"`
+	ObservedTime time.Time           `json:"observed_time"`
+}
+
 type KubernetesJobCreator struct {
 	Jobs batchtypedv1.JobInterface
 }
@@ -60,10 +118,165 @@ func (c KubernetesJobCreator) Create(ctx context.Context, job *batchv1.Job) (*ba
 	return c.Jobs.Create(ctx, job, metav1.CreateOptions{})
 }
 
+type KubernetesJobWatcher struct {
+	Jobs         batchtypedv1.JobInterface
+	PollInterval time.Duration
+}
+
+func (w KubernetesJobWatcher) WaitForCompletion(ctx context.Context, namespace string, name string) (JobResult, error) {
+	if w.Jobs == nil {
+		return JobResult{}, errors.New("kubernetes job interface is nil")
+	}
+	if strings.TrimSpace(name) == "" {
+		return JobResult{}, errors.New("job name is required")
+	}
+
+	interval := w.PollInterval
+	if interval <= 0 {
+		interval = defaultPoll
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		job, err := w.Jobs.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return JobResult{}, fmt.Errorf("get Kubernetes Job: %w", err)
+		}
+		if result, done := jobResult(job); done {
+			return result, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return JobResult{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+type KubernetesJobLogCollector struct {
+	Pods coretypedv1.PodInterface
+}
+
+func (c KubernetesJobLogCollector) CollectJobLogs(ctx context.Context, namespace string, jobName string) ([]LogEntry, error) {
+	if c.Pods == nil {
+		return nil, errors.New("kubernetes pod interface is nil")
+	}
+	if strings.TrimSpace(jobName) == "" {
+		return nil, errors.New("job name is required")
+	}
+
+	selector := labels.Set{"job-name": jobName}.String()
+	pods, err := c.Pods.List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("list Kubernetes Pods for Job: %w", err)
+	}
+
+	var entries []LogEntry
+	for _, pod := range pods.Items {
+		for _, container := range pod.Spec.InitContainers {
+			entries = append(entries, c.collectContainerLog(ctx, pod.Name, container.Name))
+		}
+		for _, container := range pod.Spec.Containers {
+			entries = append(entries, c.collectContainerLog(ctx, pod.Name, container.Name))
+		}
+	}
+	return entries, nil
+}
+
+func (c KubernetesJobLogCollector) collectContainerLog(ctx context.Context, podName string, containerName string) LogEntry {
+	entry := LogEntry{Pod: podName, Container: containerName}
+	body, err := c.Pods.GetLogs(podName, &corev1.PodLogOptions{Container: containerName}).DoRaw(ctx)
+	if err != nil {
+		entry.Error = err.Error()
+		return entry
+	}
+	entry.Logs = string(body)
+	return entry
+}
+
+type HTTPAgentClient struct {
+	URL        string
+	HTTPClient *http.Client
+	Timeout    time.Duration
+}
+
+func NewHTTPAgentClient(agentURL string, timeout time.Duration) (*HTTPAgentClient, error) {
+	agentURL = strings.TrimSpace(agentURL)
+	if agentURL == "" {
+		return nil, nil
+	}
+	parsed, err := url.Parse(agentURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse NOVA_SRE_AGENT_URL: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return nil, errors.New("NOVA_SRE_AGENT_URL must include scheme and host")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/diagnose"
+	if timeout <= 0 {
+		timeout = defaultAgentWait
+	}
+	return &HTTPAgentClient{
+		URL:        parsed.String(),
+		HTTPClient: &http.Client{Timeout: timeout},
+		Timeout:    timeout,
+	}, nil
+}
+
+func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest) error {
+	if c == nil {
+		return nil
+	}
+	if strings.TrimSpace(c.URL) == "" {
+		return errors.New("agent URL is required")
+	}
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("marshal diagnose request: %w", err)
+	}
+
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = defaultAgentWait
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create diagnose request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := c.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send diagnose request: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("diagnose request returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 type JobRunner struct {
-	Config  JobConfig
-	Creator JobCreator
-	Logger  *log.Logger
+	Config          JobConfig
+	Creator         JobCreator
+	Watcher         JobWatcher
+	LogCollector    JobLogCollector
+	Agent           AgentClient
+	Logger          *log.Logger
+	CallbackTimeout time.Duration
+	Now             func() time.Time
 }
 
 func NewJobRunner(config JobConfig, creator JobCreator, logger *log.Logger) JobRunner {
@@ -93,7 +306,75 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 
 	r.logf("created Kubernetes Job namespace=%s name=%s delivery=%s event=%s",
 		created.Namespace, created.Name, event.DeliveryID, event.Type)
+	r.startFailureCallback(ctx, created, event)
 	return nil
+}
+
+func (r JobRunner) startFailureCallback(ctx context.Context, job *batchv1.Job, event Event) {
+	if r.Watcher == nil || r.LogCollector == nil || r.Agent == nil || job == nil {
+		return
+	}
+
+	go r.runFailureCallback(context.WithoutCancel(ctx), job.DeepCopy(), event)
+}
+
+func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, event Event) {
+	timeout := r.CallbackTimeout
+	if timeout <= 0 {
+		timeout = defaultCallback
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	result, err := r.Watcher.WaitForCompletion(ctx, job.Namespace, job.Name)
+	if err != nil {
+		r.logf("failed to observe Kubernetes Job namespace=%s name=%s delivery=%s event=%s: %v",
+			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
+		return
+	}
+	if !result.Failed {
+		r.logf("Kubernetes Job completed without diagnosis namespace=%s name=%s delivery=%s event=%s",
+			job.Namespace, job.Name, event.DeliveryID, event.Type)
+		return
+	}
+
+	logs, err := r.LogCollector.CollectJobLogs(ctx, job.Namespace, job.Name)
+	if err != nil {
+		r.logf("failed to collect Kubernetes logs namespace=%s name=%s delivery=%s event=%s: %v",
+			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
+		logs = nil
+	}
+
+	metadata := githubPayloadMetadata(event.Body)
+	request := DiagnoseRequest{
+		DeliveryID:   event.DeliveryID,
+		Event:        event.Type,
+		Repository:   metadata.Repo,
+		SHA:          metadata.SHA,
+		JobName:      job.Name,
+		Namespace:    job.Namespace,
+		Reason:       result.Reason,
+		Message:      result.Message,
+		PullRequest:  metadata.PullRequest,
+		Logs:         logs,
+		WebhookBody:  append(json.RawMessage(nil), event.Body...),
+		ObservedTime: r.now(),
+	}
+	if err := r.Agent.Diagnose(ctx, request); err != nil {
+		r.logf("failed to send diagnosis request namespace=%s name=%s delivery=%s event=%s: %v",
+			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
+		return
+	}
+
+	r.logf("sent diagnosis request namespace=%s name=%s delivery=%s event=%s logs=%d",
+		job.Namespace, job.Name, event.DeliveryID, event.Type, len(logs))
+}
+
+func (r JobRunner) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now().UTC()
 }
 
 func (r JobRunner) logf(format string, args ...any) {
@@ -232,8 +513,9 @@ func (c JobConfig) withDefaults(metadata payloadMetadata) JobConfig {
 }
 
 type payloadMetadata struct {
-	Repo string
-	SHA  string
+	Repo        string
+	SHA         string
+	PullRequest PullRequestMetadata
 }
 
 func githubPayloadMetadata(body []byte) payloadMetadata {
@@ -246,12 +528,18 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			FullName string `json:"full_name"`
 		} `json:"repository"`
 		PullRequest struct {
-			Head struct {
+			Number  int    `json:"number"`
+			HTMLURL string `json:"html_url"`
+			Head    struct {
 				SHA  string `json:"sha"`
+				Ref  string `json:"ref"`
 				Repo struct {
 					FullName string `json:"full_name"`
 				} `json:"repo"`
 			} `json:"head"`
+			Base struct {
+				Ref string `json:"ref"`
+			} `json:"base"`
 		} `json:"pull_request"`
 		WorkflowRun struct {
 			HeadSHA    string `json:"head_sha"`
@@ -267,7 +555,25 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 	return payloadMetadata{
 		Repo: firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName),
 		SHA:  firstNonEmpty(payload.HeadCommit.ID, payload.After, payload.PullRequest.Head.SHA, payload.WorkflowRun.HeadSHA),
+		PullRequest: PullRequestMetadata{
+			Number: payload.PullRequest.Number,
+			URL:    payload.PullRequest.HTMLURL,
+			Head:   payload.PullRequest.Head.Ref,
+			Base:   payload.PullRequest.Base.Ref,
+		},
 	}
+}
+
+func jobResult(job *batchv1.Job) (JobResult, bool) {
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+			return JobResult{Succeeded: true, Reason: condition.Reason, Message: condition.Message}, true
+		}
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			return JobResult{Failed: true, Reason: condition.Reason, Message: condition.Message}, true
+		}
+	}
+	return JobResult{}, false
 }
 
 func firstNonEmpty(values ...string) string {
