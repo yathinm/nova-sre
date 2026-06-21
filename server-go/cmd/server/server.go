@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/yathinm/nova-sre/server-go/internal/runner"
 )
 
 const (
@@ -38,11 +39,19 @@ type Server struct {
 }
 
 func NewServer(webhookSecret string) *Server {
+	return NewServerWithEnqueuer(webhookSecret, enqueueGitHubEvent)
+}
+
+func NewServerWithRunner(webhookSecret string, eventRunner githubEventRunner) *Server {
+	return NewServerWithEnqueuer(webhookSecret, enqueueGitHubEventWithRunner(eventRunner))
+}
+
+func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueuer) *Server {
 	s := &Server{
 		mux:           http.NewServeMux(),
 		webhookSecret: webhookSecret,
 		deliveries:    newDeliveryCache(15 * time.Minute),
-		enqueueEvent:  enqueueGitHubEvent,
+		enqueueEvent:  enqueueEvent,
 	}
 
 	s.routes()
@@ -141,10 +150,24 @@ type githubEvent struct {
 
 type githubEventEnqueuer func(context.Context, githubEvent) error
 
+type githubEventRunner interface {
+	EnqueueGitHubEvent(context.Context, runner.Event) error
+}
+
 func enqueueGitHubEvent(_ context.Context, event githubEvent) error {
 	// TODO: Create a Kubernetes Job for supported GitHub webhook events.
 	log.Printf("accepted GitHub event delivery=%s event=%s body_bytes=%d", event.DeliveryID, event.Event, len(event.Body))
 	return nil
+}
+
+func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqueuer {
+	return func(ctx context.Context, event githubEvent) error {
+		return eventRunner.EnqueueGitHubEvent(ctx, runner.Event{
+			DeliveryID: event.DeliveryID,
+			Type:       event.Event,
+			Body:       event.Body,
+		})
+	}
 }
 
 type deliveryCache struct {
