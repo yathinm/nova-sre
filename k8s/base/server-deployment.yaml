@@ -20,6 +20,19 @@ spec:
         - name: server
           image: nova-sre-server:local
           imagePullPolicy: Never
+          env:
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: GITHUB_WEBHOOK_SECRET
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: GITHUB_TOKEN
+            - name: NOVA_SRE_AGENT_URL
+              value: http://nova-sre-agent.nova-sre.svc.cluster.local:8000
           ports:
             - containerPort: 8080
           readinessProbe:
