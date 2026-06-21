@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -288,6 +290,61 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}
 }
 
+func TestJobRunnerRecordsCreatedJobMetrics(t *testing.T) {
+	metrics := NewPrometheusPipelineMetrics(prometheus.NewRegistry())
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	creator := &recordingCreator{}
+	runner := NewJobRunner(JobConfig{
+		Image: "ghcr.io/example/nova-runner:test",
+	}, creator, log.New(io.Discard, "", 0))
+	runner.Metrics = metrics
+	runner.Now = sequenceClock(now, now.Add(2*time.Second))
+
+	err := runner.EnqueueGitHubEvent(context.Background(), Event{
+		DeliveryID: "delivery-123",
+		Type:       "push",
+		Body: []byte(`{
+			"repository": {"full_name": "acme/widgets"},
+			"head_commit": {
+				"id": "abc",
+				"timestamp": "2026-06-21T11:59:55Z"
+			}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("EnqueueGitHubEvent returned error: %v", err)
+	}
+
+	assertCounterValue(t, metrics.jobsTotal.WithLabelValues("created", "acme/widgets"), 1)
+	assertGaugeValue(t, metrics.activeJobs.WithLabelValues("acme/widgets"), 1)
+	assertHistogram(t, metrics.schedulingLatency, 1, 2)
+	assertHistogram(t, metrics.agentMTTD, 1, 7)
+}
+
+func TestJobRunnerRecordsFailedJobMetricsAndClearsActiveGauge(t *testing.T) {
+	metrics := NewPrometheusPipelineMetrics(prometheus.NewRegistry())
+	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+	runner := NewJobRunner(JobConfig{
+		Image: "ghcr.io/example/nova-runner:test",
+	}, failingCreator{}, log.New(io.Discard, "", 0))
+	runner.Metrics = metrics
+	runner.Now = sequenceClock(now, now.Add(1500*time.Millisecond))
+
+	err := runner.EnqueueGitHubEvent(context.Background(), Event{
+		DeliveryID: "delivery-123",
+		Type:       "workflow_run",
+		Body:       []byte(`{"workflow_run":{"head_sha":"abc","created_at":"2026-06-21T11:59:50Z","repository":{"full_name":"acme/widgets"}}}`),
+	})
+	if err == nil {
+		t.Fatal("expected create failure")
+	}
+
+	assertCounterValue(t, metrics.jobsTotal.WithLabelValues("failed", "acme/widgets"), 1)
+	assertGaugeValue(t, metrics.activeJobs.WithLabelValues("acme/widgets"), 0)
+	assertHistogram(t, metrics.schedulingLatency, 1, 1.5)
+	assertHistogram(t, metrics.agentMTTD, 1, 11.5)
+}
+
 type recordingCreator struct {
 	created *batchv1.Job
 }
@@ -297,6 +354,12 @@ func (c *recordingCreator) Create(_ context.Context, job *batchv1.Job) (*batchv1
 	created := job.DeepCopy()
 	created.Name = created.GenerateName + "abc123"
 	return created, nil
+}
+
+type failingCreator struct{}
+
+func (failingCreator) Create(context.Context, *batchv1.Job) (*batchv1.Job, error) {
+	return nil, errors.New("boom")
 }
 
 type recordingWatcher struct {
@@ -327,6 +390,54 @@ func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) er
 	a.called = true
 	a.request = request
 	return a.err
+}
+
+func sequenceClock(times ...time.Time) func() time.Time {
+	i := 0
+	return func() time.Time {
+		if i >= len(times) {
+			return times[len(times)-1]
+		}
+		now := times[i]
+		i++
+		return now
+	}
+}
+
+func assertCounterValue(t *testing.T, counter prometheus.Counter, want float64) {
+	t.Helper()
+	metric := &dto.Metric{}
+	if err := counter.Write(metric); err != nil {
+		t.Fatalf("counter Write returned error: %v", err)
+	}
+	if got := metric.GetCounter().GetValue(); got != want {
+		t.Fatalf("expected counter %v, got %v", want, got)
+	}
+}
+
+func assertGaugeValue(t *testing.T, gauge prometheus.Gauge, want float64) {
+	t.Helper()
+	metric := &dto.Metric{}
+	if err := gauge.Write(metric); err != nil {
+		t.Fatalf("gauge Write returned error: %v", err)
+	}
+	if got := metric.GetGauge().GetValue(); got != want {
+		t.Fatalf("expected gauge %v, got %v", want, got)
+	}
+}
+
+func assertHistogram(t *testing.T, histogram prometheus.Histogram, wantCount uint64, wantSum float64) {
+	t.Helper()
+	metric := &dto.Metric{}
+	if err := histogram.Write(metric); err != nil {
+		t.Fatalf("histogram Write returned error: %v", err)
+	}
+	if got := metric.GetHistogram().GetSampleCount(); got != wantCount {
+		t.Fatalf("expected histogram count %d, got %d", wantCount, got)
+	}
+	if got := metric.GetHistogram().GetSampleSum(); got != wantSum {
+		t.Fatalf("expected histogram sum %v, got %v", wantSum, got)
+	}
 }
 
 func assertContainerEnv(t *testing.T, job *batchv1.Job, name string, want string) {

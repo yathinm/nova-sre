@@ -274,6 +274,7 @@ type JobRunner struct {
 	Watcher         JobWatcher
 	LogCollector    JobLogCollector
 	Agent           AgentClient
+	Metrics         PipelineMetrics
 	Logger          *log.Logger
 	CallbackTimeout time.Duration
 	Now             func() time.Time
@@ -283,29 +284,57 @@ func NewJobRunner(config JobConfig, creator JobCreator, logger *log.Logger) JobR
 	return JobRunner{
 		Config:  config,
 		Creator: creator,
+		Metrics: DefaultPipelineMetrics(),
 		Logger:  logger,
+		Now:     time.Now,
 	}
 }
 
 func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
+	startedAt := r.now()
 	job, err := BuildGitHubEventJob(r.Config, event)
 	if err != nil {
 		return err
 	}
+	metadata := githubPayloadMetadata(event.Body)
+	repo := firstNonEmpty(job.Annotations["nova-sre.io/repository"], metadata.Repo)
+	r.metrics().JobStarted(repo)
 
 	if r.Creator == nil {
 		r.logf("prepared Kubernetes Job namespace=%s generate_name=%s delivery=%s event=%s",
 			job.Namespace, job.GenerateName, event.DeliveryID, event.Type)
+		r.metrics().JobFinished(PipelineJobMetrics{
+			Status:            "prepared",
+			Repo:              repo,
+			SchedulingLatency: durationSince(startedAt, r.now()),
+			EventTime:         metadata.EventTime,
+			FinishedAt:        r.now(),
+		})
 		return nil
 	}
 
 	created, err := r.Creator.Create(ctx, job)
 	if err != nil {
+		r.metrics().JobFinished(PipelineJobMetrics{
+			Status:            "failed",
+			Repo:              repo,
+			SchedulingLatency: durationSince(startedAt, r.now()),
+			EventTime:         metadata.EventTime,
+			FinishedAt:        r.now(),
+		})
 		return fmt.Errorf("create Kubernetes Job: %w", err)
 	}
 
 	r.logf("created Kubernetes Job namespace=%s name=%s delivery=%s event=%s",
 		created.Namespace, created.Name, event.DeliveryID, event.Type)
+	r.metrics().JobFinished(PipelineJobMetrics{
+		Status:            "created",
+		Repo:              repo,
+		SchedulingLatency: durationSince(startedAt, r.now()),
+		EventTime:         metadata.EventTime,
+		FinishedAt:        r.now(),
+		Active:            true,
+	})
 	r.startFailureCallback(ctx, created, event)
 	return nil
 }
@@ -332,6 +361,20 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
 		return
 	}
+
+	metadata := githubPayloadMetadata(event.Body)
+	repo := firstNonEmpty(job.Annotations["nova-sre.io/repository"], metadata.Repo)
+	status := "success"
+	if result.Failed {
+		status = "failed"
+	}
+	r.metrics().JobFinished(PipelineJobMetrics{
+		Status:     status,
+		Repo:       repo,
+		EventTime:  metadata.EventTime,
+		FinishedAt: r.now(),
+	})
+
 	if !result.Failed {
 		r.logf("Kubernetes Job completed without diagnosis namespace=%s name=%s delivery=%s event=%s",
 			job.Namespace, job.Name, event.DeliveryID, event.Type)
@@ -345,7 +388,6 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 		logs = nil
 	}
 
-	metadata := githubPayloadMetadata(event.Body)
 	request := DiagnoseRequest{
 		DeliveryID:   event.DeliveryID,
 		Event:        event.Type,
@@ -381,6 +423,13 @@ func (r JobRunner) logf(format string, args ...any) {
 	if r.Logger != nil {
 		r.Logger.Printf(format, args...)
 	}
+}
+
+func (r JobRunner) metrics() PipelineMetrics {
+	if r.Metrics != nil {
+		return r.Metrics
+	}
+	return noopPipelineMetrics{}
 }
 
 func JobConfigFromEnv(getenv func(string) string) JobConfig {
@@ -516,21 +565,25 @@ type payloadMetadata struct {
 	Repo        string
 	SHA         string
 	PullRequest PullRequestMetadata
+	EventTime   time.Time
 }
 
 func githubPayloadMetadata(body []byte) payloadMetadata {
 	var payload struct {
 		After      string `json:"after"`
 		HeadCommit struct {
-			ID string `json:"id"`
+			ID        string `json:"id"`
+			Timestamp string `json:"timestamp"`
 		} `json:"head_commit"`
 		Repository struct {
 			FullName string `json:"full_name"`
 		} `json:"repository"`
 		PullRequest struct {
-			Number  int    `json:"number"`
-			HTMLURL string `json:"html_url"`
-			Head    struct {
+			Number    int    `json:"number"`
+			HTMLURL   string `json:"html_url"`
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
+			Head      struct {
 				SHA  string `json:"sha"`
 				Ref  string `json:"ref"`
 				Repo struct {
@@ -542,11 +595,20 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			} `json:"base"`
 		} `json:"pull_request"`
 		WorkflowRun struct {
-			HeadSHA    string `json:"head_sha"`
-			Repository struct {
+			HeadSHA      string `json:"head_sha"`
+			CreatedAt    string `json:"created_at"`
+			UpdatedAt    string `json:"updated_at"`
+			RunStartedAt string `json:"run_started_at"`
+			Repository   struct {
 				FullName string `json:"full_name"`
 			} `json:"repository"`
 		} `json:"workflow_run"`
+		CheckRun struct {
+			StartedAt   string `json:"started_at"`
+			CompletedAt string `json:"completed_at"`
+		} `json:"check_run"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return payloadMetadata{}
@@ -561,6 +623,18 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			Head:   payload.PullRequest.Head.Ref,
 			Base:   payload.PullRequest.Base.Ref,
 		},
+		EventTime: firstTime(
+			payload.WorkflowRun.RunStartedAt,
+			payload.WorkflowRun.CreatedAt,
+			payload.PullRequest.CreatedAt,
+			payload.CheckRun.StartedAt,
+			payload.HeadCommit.Timestamp,
+			payload.CreatedAt,
+			payload.UpdatedAt,
+			payload.WorkflowRun.UpdatedAt,
+			payload.PullRequest.UpdatedAt,
+			payload.CheckRun.CompletedAt,
+		),
 	}
 }
 
