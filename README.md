@@ -30,7 +30,8 @@ GitHub webhook -> Go orchestrator -> Kubernetes Job -> logs and metrics -> LangG
 
 The stats frontend is **Grafana**. There is no separate checked-in frontend app for
 stats today; run `make port-forward-grafana` after Terraform installs the Helm
-release and open `http://localhost:3000`.
+release and open `http://localhost:3000`. Terraform provisions the
+`dashboards/pipeline-stats.json` dashboard into Grafana.
 
 ## Local Prerequisites
 

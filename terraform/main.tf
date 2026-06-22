@@ -37,3 +37,22 @@ resource "helm_release" "grafana" {
     file("${path.module}/grafana-values.yaml"),
   ]
 }
+
+resource "kubernetes_config_map" "grafana_pipeline_dashboard" {
+  metadata {
+    name      = "grafana-dashboard-nova-sre-pipeline"
+    namespace = kubernetes_namespace.observability.metadata[0].name
+
+    labels = {
+      grafana_dashboard               = "1"
+      "app.kubernetes.io/name"        = "nova-sre-pipeline-dashboard"
+      "app.kubernetes.io/managed-by"  = "terraform"
+      "app.kubernetes.io/part-of"     = "nova-sre"
+      "app.kubernetes.io/component"   = "observability"
+    }
+  }
+
+  data = {
+    "pipeline-stats.json" = file("${path.module}/../dashboards/pipeline-stats.json")
+  }
+}

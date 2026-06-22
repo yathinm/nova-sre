@@ -14,3 +14,11 @@ datasources:
         access: proxy
         url: http://prometheus-server.observability.svc.cluster.local
         isDefault: true
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    provider:
+      allowUiUpdates: true
+      foldersFromFilesStructure: false

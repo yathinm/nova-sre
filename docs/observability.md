@@ -46,6 +46,7 @@ Terraform creates the `observability` namespace and installs:
 
 - Prometheus from the `prometheus-community/prometheus` Helm chart.
 - Grafana from the `grafana/grafana` Helm chart.
+- A Grafana dashboard ConfigMap for `dashboards/pipeline-stats.json`.
 
 Confirm the pods and services exist:
 
@@ -80,7 +81,8 @@ make port-forward-grafana
 Open Grafana at `http://localhost:3000`.
 
 The local Grafana Helm values set the admin password to `admin` in
-`terraform/grafana-values.yaml`.
+`terraform/grafana-values.yaml`. The Nova-SRE Pipeline Stats dashboard is
+provisioned automatically from `dashboards/pipeline-stats.json`.
 
 ## Validate the Server Metrics Endpoint
 
