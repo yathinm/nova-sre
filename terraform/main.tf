@@ -44,11 +44,11 @@ resource "kubernetes_config_map" "grafana_pipeline_dashboard" {
     namespace = kubernetes_namespace.observability.metadata[0].name
 
     labels = {
-      grafana_dashboard               = "1"
-      "app.kubernetes.io/name"        = "nova-sre-pipeline-dashboard"
-      "app.kubernetes.io/managed-by"  = "terraform"
-      "app.kubernetes.io/part-of"     = "nova-sre"
-      "app.kubernetes.io/component"   = "observability"
+      grafana_dashboard              = "1"
+      "app.kubernetes.io/name"       = "nova-sre-pipeline-dashboard"
+      "app.kubernetes.io/managed-by" = "terraform"
+      "app.kubernetes.io/part-of"    = "nova-sre"
+      "app.kubernetes.io/component"  = "observability"
     }
   }
 
