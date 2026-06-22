@@ -3,7 +3,7 @@ PROFILE=nova-sre
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-apply tf-destroy docker-env docker-build deploy-apps \
         port-forward-server port-forward-agent port-forward-prometheus port-forward-grafana \
-        all-local test-go lint-go test-agent lint-agent
+        validate-metrics all-local test-go lint-go test-agent lint-agent
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -69,6 +69,9 @@ port-forward-prometheus: ## Forward Prometheus → localhost:9090
 
 port-forward-grafana: ## Forward Grafana → localhost:3000
 	kubectl port-forward -n observability svc/grafana 3000:80
+
+validate-metrics: ## Verify the port-forwarded Go server exposes Prometheus metrics
+	curl -fsS http://localhost:8080/metrics | grep -E 'go_gc_duration_seconds|pipeline_jobs_total'
 
 # ── Go server ─────────────────────────────────────────────────────────────────
 

@@ -6,6 +6,12 @@ The only supported local runtime is **Minikube**. Local development, Terraform p
 configuration, Docker image builds, and Kubernetes deployment steps all target the
 `nova-sre` Minikube profile. No other local Kubernetes runtime is supported.
 
+The project is currently in the local Minikube integration phase. The Go server,
+Python agent, Kubernetes manifests, Terraform provider wiring, and Terraform-managed
+Prometheus/Grafana releases are present. The local work now is validating the full
+webhook-to-job-to-agent path and making observability useful as real pipeline data
+flows through it.
+
 ## Core Flow
 
 ```text
@@ -21,6 +27,10 @@ GitHub webhook -> Go orchestrator -> Kubernetes Job -> logs and metrics -> LangG
 - **Prometheus and Grafana** telemetry
 - **Python LangGraph** diagnostic agent
 - **Kubernetes Secrets / External Secrets**
+
+The stats frontend is **Grafana**. There is no separate checked-in frontend app for
+stats today; run `make port-forward-grafana` after Terraform installs the Helm
+release and open `http://localhost:3000`.
 
 ## Local Prerequisites
 
@@ -69,9 +79,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    ```
 
    The Terraform provider configuration targets the `nova-sre` kube context. The
-   current Terraform tree contains provider wiring, local profile metadata, and Helm
-   values files; add Terraform-managed Kubernetes or Helm resources there as the
-   local infrastructure surface grows.
+   current Terraform tree installs the local observability namespace plus Prometheus
+   and Grafana Helm releases.
 
 5. Build application images inside Minikube's Docker daemon:
 
@@ -100,10 +109,32 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    ```
 
    The expected local endpoint is `http://localhost:8080`. The current server exposes
-   `GET /healthz`; add the GitHub webhook route in the Go orchestrator before wiring
-   live GitHub deliveries to it.
+   `GET /healthz`, `GET /metrics`, and `POST /webhook`.
 
-8. Create a public tunnel to the local server port and configure the GitHub webhook:
+8. Validate the Prometheus metrics endpoint:
+
+   ```sh
+   make validate-metrics
+   ```
+
+   The target expects the server port-forward above to be running. It curls
+   `http://localhost:8080/metrics` and checks for default Go runtime metrics or
+   Nova-SRE pipeline metrics.
+
+9. Open the local observability services after Terraform has installed them.
+   Use separate terminals for these long-running port-forwards:
+
+   ```sh
+   make port-forward-prometheus
+   make port-forward-grafana
+   ```
+
+   Prometheus is available at `http://localhost:9090`. Grafana, the local stats
+   frontend, is available at `http://localhost:3000`. See
+   [docs/observability.md](docs/observability.md) for install, port-forward, and
+   scrape validation details.
+
+10. Create a public tunnel to the local server port and configure the GitHub webhook:
 
    ```sh
    ngrok http 8080
@@ -113,7 +144,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    implemented by the Go server. Use the shared webhook secret stored in Kubernetes
    once the secret manifest or external-secret integration exists.
 
-9. Follow the event through the local pipeline:
+11. Follow the event through the local pipeline:
 
    - GitHub sends the webhook to the public tunnel.
    - The tunnel forwards to the port-forwarded Go server in Minikube.
@@ -142,14 +173,16 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |
 | `make port-forward-prometheus` | Forwards `svc/prometheus-server` in namespace `observability` to `localhost:9090`. |
 | `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
+| `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
 | `make test-go` | Runs Go tests under `server-go/`. |
 | `make lint-go` | Runs `go vet ./...` under `server-go/`. |
 | `make test-agent` | Runs `python -m pytest` under `agent-python/`. |
 | `make lint-agent` | Runs `ruff check .` under `agent-python/`. |
 | `make all-local` | Runs `cluster-create`, `addons`, `tf-init`, `tf-apply`, `docker-build`, and `deploy-apps`. |
 
-`make all-local` does not enable ingress, open dashboards, start port-forwards, create a
-public webhook tunnel, or configure GitHub. Run those steps explicitly when needed.
+`make all-local` does not enable ingress, open dashboards, start port-forwards,
+validate `/metrics`, create a public webhook tunnel, or configure GitHub. Run those
+steps explicitly when needed.
 
 ## Branch Structure
 
