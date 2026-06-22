@@ -1,8 +1,16 @@
-# Helm values for Grafana
-# Populated during infrastructure provisioning phase.
-adminPassword: ""
+# Helm values for the local Minikube Grafana release.
+adminPassword: admin
 service:
   type: ClusterIP
 persistence:
   enabled: true
   size: 5Gi
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus-server.observability.svc.cluster.local
+        isDefault: true
