@@ -63,6 +63,8 @@ management, and a more complete operator control surface.
 - A release checklist now covers preflight validation, image publishing,
   production overlay customization, rollout, smoke tests, monitoring, and
   rollback.
+- A production release preflight command now stamps immutable image tags and
+  runs release, secret, and production overlay validation in one step.
 - Runtime config reports whether server-to-agent auth is enabled without exposing
   the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
@@ -120,8 +122,8 @@ CI currently gates:
   ingress controller, certificate issuer, image registry, and secret manager.
 - Connect external secret-manager workflows to the same `nova-sre-secrets` key
   contract used by the environment-driven sync helper.
-- Connect image publishing and production image stamping into a single release
-  command or workflow.
+- Connect image building and pushing to the existing production release
+  preflight command.
 
 ## Useful Verification Commands
 
