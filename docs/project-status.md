@@ -49,7 +49,8 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
   reload it on startup; the local Kubernetes deployment mounts this path for
   server container restarts.
 - A production-oriented Kubernetes overlay now provides starter TLS ingress and
-  PVC-backed activity storage manifests.
+  PVC-backed activity storage manifests, with validation for TLS, API auth/CORS
+  secret wiring, and the activity PVC.
 - Runtime config reports whether server-to-agent auth is enabled without exposing
   the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
@@ -105,7 +106,9 @@ CI currently gates:
   accepting request-level create/upsert settings from the diagnosis API.
 - Customize and harden the production ingress/TLS overlay for the target domain,
   ingress controller, certificate issuer, image registry, and secret manager.
-- Decide how API auth and CORS should be configured outside isolated local demos.
+- Add environment-specific production secret-management automation for
+  `NOVA_SRE_API_TOKEN`, `NOVA_SRE_ALLOWED_ORIGINS`, GitHub credentials, and
+  agent auth.
 - Add release/deployment documentation for non-local environments.
 
 ## Useful Verification Commands

@@ -10,6 +10,7 @@ Render or apply the production overlay with:
 
 ```sh
 kubectl kustomize k8s/overlays/production
+make validate-production-k8s
 kubectl apply -k k8s/overlays/production
 ```
 
@@ -25,6 +26,10 @@ Before applying it to a real cluster:
   frontend origin, for example `https://nova-sre.example.com`.
 - Set `NOVA_SRE_API_TOKEN` for the control-panel API before exposing `/api/*`
   beyond an isolated local demo.
+
+`make validate-production-k8s` renders the overlay and checks that TLS ingress,
+the activity PVC, `NOVA_SRE_API_TOKEN`, and `NOVA_SRE_ALLOWED_ORIGINS` wiring
+remain present.
 
 The overlay routes:
 

@@ -172,6 +172,9 @@ jobs:
       - name: Validate manifests
         run: make KUBECTL_VALIDATE=false validate-k8s
 
+      - name: Validate production overlay
+        run: make validate-production-k8s
+
   terraform:
     name: Terraform validation
     needs: changes
