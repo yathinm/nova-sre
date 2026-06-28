@@ -31,6 +31,11 @@ NOVA_SRE_ACTIVITY_LIMIT=200
 NOVA_SRE_DELIVERY_CACHE_TTL=15m
 ```
 
+`NOVA_SRE_ALLOWED_ORIGINS` is optional. Leave it unset for isolated local demos,
+where browser-readable endpoints return wildcard CORS headers. Set it to a
+comma-separated list such as `http://localhost:8081,https://panel.example.com`
+when you want the Go API to echo only approved frontend origins.
+
 Generated runner Jobs use conservative default resources for local Minikube:
 `RUNNER_JOB_CPU_REQUEST=100m`, `RUNNER_JOB_MEMORY_REQUEST=128Mi`,
 `RUNNER_JOB_CPU_LIMIT=500m`, and `RUNNER_JOB_MEMORY_LIMIT=256Mi`. Add those
