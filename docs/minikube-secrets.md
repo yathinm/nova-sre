@@ -34,6 +34,7 @@ NOVA_SRE_READ_HEADER_TIMEOUT=5s
 NOVA_SRE_READ_TIMEOUT=15s
 NOVA_SRE_WRITE_TIMEOUT=30s
 NOVA_SRE_IDLE_TIMEOUT=60s
+NOVA_SRE_MAX_LOG_CHARS=20000
 ```
 
 `NOVA_SRE_ALLOWED_ORIGINS` is optional. Leave it unset for isolated local demos,
@@ -48,6 +49,10 @@ Generated runner Jobs use conservative default resources for local Minikube:
 `RUNNER_JOB_CPU_LIMIT=500m`, and `RUNNER_JOB_MEMORY_LIMIT=256Mi`. Add those
 environment variables to `k8s/base/server-deployment.yaml` only when a local
 test needs different runner sizing.
+
+The agent truncates normalized submitted logs to `NOVA_SRE_MAX_LOG_CHARS` before
+classification and optional LLM prompting. The default keeps diagnosis payloads
+bounded while preserving the beginning and end of oversized log streams.
 
 An example manifest is available at `k8s/examples/nova-sre-secret.example.yaml`
 for local experimentation. Keep real secret values out of git.
