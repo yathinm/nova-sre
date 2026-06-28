@@ -18,6 +18,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+func TestRealUnhealthyPRSignalForNovaSRE(t *testing.T) {
+	t.Fatalf("intentional real unhealthy PR signal for Nova-SRE end-to-end diagnosis")
+}
+
 func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	ttl := int32(120)
 	backoff := int32(1)
