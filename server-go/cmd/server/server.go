@@ -296,7 +296,7 @@ type githubEventRunner interface {
 }
 
 func enqueueGitHubEvent(_ context.Context, event githubEvent) error {
-	// TODO: Create a Kubernetes Job for supported GitHub webhook events.
+	// Fallback for tests and local runs without an injected Kubernetes runner.
 	log.Printf("accepted GitHub event delivery=%s event=%s body_bytes=%d", event.DeliveryID, event.Event, len(event.Body))
 	return nil
 }
