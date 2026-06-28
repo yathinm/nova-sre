@@ -73,6 +73,18 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	if got := container.Command; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--once" {
 		t.Fatalf("unexpected command: %#v", got)
 	}
+	if got := container.Resources.Requests.Cpu().String(); got != defaultRunnerCPURequest {
+		t.Fatalf("expected default cpu request %q, got %q", defaultRunnerCPURequest, got)
+	}
+	if got := container.Resources.Requests.Memory().String(); got != defaultRunnerMemoryRequest {
+		t.Fatalf("expected default memory request %q, got %q", defaultRunnerMemoryRequest, got)
+	}
+	if got := container.Resources.Limits.Cpu().String(); got != defaultRunnerCPULimit {
+		t.Fatalf("expected default cpu limit %q, got %q", defaultRunnerCPULimit, got)
+	}
+	if got := container.Resources.Limits.Memory().String(); got != defaultRunnerMemoryLimit {
+		t.Fatalf("expected default memory limit %q, got %q", defaultRunnerMemoryLimit, got)
+	}
 
 	assertEnv(t, container.Env, "GITHUB_EVENT_NAME", "push")
 	assertEnv(t, container.Env, "GITHUB_DELIVERY_ID", "delivery-123")
@@ -141,6 +153,10 @@ func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 		"RUNNER_JOB_TTL_SECONDS":     "900",
 		"RUNNER_JOB_BACKOFF_LIMIT":   "2",
 		"RUNNER_JOB_SERVICE_ACCOUNT": "nova-runner",
+		"RUNNER_JOB_CPU_REQUEST":     "150m",
+		"RUNNER_JOB_MEMORY_REQUEST":  "160Mi",
+		"RUNNER_JOB_CPU_LIMIT":       "750m",
+		"RUNNER_JOB_MEMORY_LIMIT":    "384Mi",
 	}
 
 	config := JobConfigFromEnv(func(name string) string {
@@ -164,6 +180,31 @@ func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 	}
 	if config.ServiceAccountName != "nova-runner" {
 		t.Fatalf("expected service account nova-runner, got %q", config.ServiceAccountName)
+	}
+	if got := config.Resources.Requests.Cpu().String(); got != "150m" {
+		t.Fatalf("expected cpu request 150m, got %q", got)
+	}
+	if got := config.Resources.Requests.Memory().String(); got != "160Mi" {
+		t.Fatalf("expected memory request 160Mi, got %q", got)
+	}
+	if got := config.Resources.Limits.Cpu().String(); got != "750m" {
+		t.Fatalf("expected cpu limit 750m, got %q", got)
+	}
+	if got := config.Resources.Limits.Memory().String(); got != "384Mi" {
+		t.Fatalf("expected memory limit 384Mi, got %q", got)
+	}
+}
+
+func TestJobConfigFromEnvFallsBackForInvalidRunnerResources(t *testing.T) {
+	config := JobConfigFromEnv(func(name string) string {
+		if name == "RUNNER_JOB_CPU_REQUEST" {
+			return "not-a-quantity"
+		}
+		return ""
+	})
+
+	if got := config.Resources.Requests.Cpu().String(); got != defaultRunnerCPURequest {
+		t.Fatalf("expected default cpu request %q, got %q", defaultRunnerCPURequest, got)
 	}
 }
 

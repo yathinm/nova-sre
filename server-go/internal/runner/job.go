@@ -19,6 +19,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	batchtypedv1 "k8s.io/client-go/kubernetes/typed/batch/v1"
@@ -33,6 +34,11 @@ const (
 	defaultPoll      = 2 * time.Second
 	defaultCallback  = 5 * time.Minute
 	defaultAgentWait = 10 * time.Second
+
+	defaultRunnerCPURequest    = "100m"
+	defaultRunnerMemoryRequest = "128Mi"
+	defaultRunnerCPULimit      = "500m"
+	defaultRunnerMemoryLimit   = "256Mi"
 )
 
 var dnsLabelPattern = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -53,6 +59,7 @@ type JobConfig struct {
 	TTLSecondsFinished *int32
 	BackoffLimit       *int32
 	ServiceAccountName string
+	Resources          corev1.ResourceRequirements
 }
 
 type JobCreator interface {
@@ -507,6 +514,7 @@ func JobConfigFromEnv(getenv func(string) string) JobConfig {
 		TTLSecondsFinished: &ttl,
 		BackoffLimit:       &backoff,
 		ServiceAccountName: strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
+		Resources:          runnerResourceRequirements(getenv),
 	}
 
 	if raw := strings.TrimSpace(getenv("RUNNER_JOB_TTL_SECONDS")); raw != "" {
@@ -568,9 +576,10 @@ func BuildGitHubEventJob(config JobConfig, event Event) (*batchv1.Job, error) {
 	}
 
 	container := corev1.Container{
-		Name:    "runner",
-		Image:   config.Image,
-		Command: append([]string(nil), config.Command...),
+		Name:      "runner",
+		Image:     config.Image,
+		Command:   append([]string(nil), config.Command...),
+		Resources: *config.Resources.DeepCopy(),
 		Env: []corev1.EnvVar{
 			{Name: "GITHUB_EVENT_NAME", Value: event.Type},
 			{Name: "GITHUB_DELIVERY_ID", Value: event.DeliveryID},
@@ -622,8 +631,39 @@ func (c JobConfig) withDefaults(metadata payloadMetadata) JobConfig {
 		backoff := defaultBackoff
 		c.BackoffLimit = &backoff
 	}
+	if len(c.Resources.Requests) == 0 && len(c.Resources.Limits) == 0 {
+		c.Resources = runnerResourceRequirements(nil)
+	}
 
 	return c
+}
+
+func runnerResourceRequirements(getenv func(string) string) corev1.ResourceRequirements {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resourceQuantity(getenv("RUNNER_JOB_CPU_REQUEST"), defaultRunnerCPURequest),
+			corev1.ResourceMemory: resourceQuantity(getenv("RUNNER_JOB_MEMORY_REQUEST"), defaultRunnerMemoryRequest),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resourceQuantity(getenv("RUNNER_JOB_CPU_LIMIT"), defaultRunnerCPULimit),
+			corev1.ResourceMemory: resourceQuantity(getenv("RUNNER_JOB_MEMORY_LIMIT"), defaultRunnerMemoryLimit),
+		},
+	}
+}
+
+func resourceQuantity(raw string, fallback string) resource.Quantity {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		value = fallback
+	}
+	quantity, err := resource.ParseQuantity(value)
+	if err != nil {
+		return resource.MustParse(fallback)
+	}
+	return quantity
 }
 
 type payloadMetadata struct {
