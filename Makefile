@@ -57,6 +57,10 @@ docker-build: ## Build images directly inside Minikube's Docker daemon
 deploy-apps: ## Apply RBAC and base manifests
 	kubectl apply -f k8s/rbac/
 	kubectl apply -f k8s/base/
+	kubectl rollout restart deployment/nova-sre-server deployment/nova-sre-agent deployment/nova-sre-frontend -n nova-sre
+	kubectl rollout status deployment/nova-sre-server -n nova-sre --timeout=120s
+	kubectl rollout status deployment/nova-sre-agent -n nova-sre --timeout=120s
+	kubectl rollout status deployment/nova-sre-frontend -n nova-sre --timeout=120s
 
 # ── Port-forwards ─────────────────────────────────────────────────────────────
 
