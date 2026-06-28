@@ -52,17 +52,18 @@ type Event struct {
 }
 
 type JobConfig struct {
-	Namespace          string
-	Image              string
-	Repo               string
-	SHA                string
-	Command            []string
-	CommandByEvent     map[string][]string
-	GitHubCommentMode  string
-	TTLSecondsFinished *int32
-	BackoffLimit       *int32
-	ServiceAccountName string
-	Resources          corev1.ResourceRequirements
+	Namespace           string
+	Image               string
+	Repo                string
+	SHA                 string
+	Command             []string
+	CommandByEvent      map[string][]string
+	CommandByRepository map[string][]string
+	GitHubCommentMode   string
+	TTLSecondsFinished  *int32
+	BackoffLimit        *int32
+	ServiceAccountName  string
+	Resources           corev1.ResourceRequirements
 }
 
 type JobCreator interface {
@@ -593,17 +594,18 @@ func JobConfigFromEnv(getenv func(string) string) JobConfig {
 	backoff := defaultBackoff
 
 	config := JobConfig{
-		Namespace:          firstNonEmpty(getenv("RUNNER_JOB_NAMESPACE"), defaultNamespace),
-		Image:              firstNonEmpty(getenv("RUNNER_JOB_IMAGE"), defaultImage),
-		Repo:               strings.TrimSpace(getenv("RUNNER_REPO")),
-		SHA:                strings.TrimSpace(getenv("RUNNER_SHA")),
-		Command:            strings.Fields(getenv("RUNNER_JOB_COMMAND")),
-		CommandByEvent:     eventCommandOverrides(getenv),
-		GitHubCommentMode:  githubCommentMode(getenv("NOVA_SRE_GITHUB_COMMENT_MODE")),
-		TTLSecondsFinished: &ttl,
-		BackoffLimit:       &backoff,
-		ServiceAccountName: strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
-		Resources:          runnerResourceRequirements(getenv),
+		Namespace:           firstNonEmpty(getenv("RUNNER_JOB_NAMESPACE"), defaultNamespace),
+		Image:               firstNonEmpty(getenv("RUNNER_JOB_IMAGE"), defaultImage),
+		Repo:                strings.TrimSpace(getenv("RUNNER_REPO")),
+		SHA:                 strings.TrimSpace(getenv("RUNNER_SHA")),
+		Command:             strings.Fields(getenv("RUNNER_JOB_COMMAND")),
+		CommandByEvent:      eventCommandOverrides(getenv),
+		CommandByRepository: repositoryCommandOverrides(getenv("RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES")),
+		GitHubCommentMode:   githubCommentMode(getenv("NOVA_SRE_GITHUB_COMMENT_MODE")),
+		TTLSecondsFinished:  &ttl,
+		BackoffLimit:        &backoff,
+		ServiceAccountName:  strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
+		Resources:           runnerResourceRequirements(getenv),
 	}
 
 	if raw := strings.TrimSpace(getenv("RUNNER_JOB_TTL_SECONDS")); raw != "" {
@@ -667,7 +669,7 @@ func BuildGitHubEventJob(config JobConfig, event Event) (*batchv1.Job, error) {
 	container := corev1.Container{
 		Name:      "runner",
 		Image:     config.Image,
-		Command:   config.commandForEvent(event.Type),
+		Command:   config.commandForEvent(event.Type, config.Repo),
 		Resources: *config.Resources.DeepCopy(),
 		Env:       githubContextEnv(event, config, metadata),
 	}
@@ -720,15 +722,24 @@ func (c JobConfig) withDefaults(metadata payloadMetadata) JobConfig {
 	if c.CommandByEvent == nil {
 		c.CommandByEvent = map[string][]string{}
 	}
+	if c.CommandByRepository == nil {
+		c.CommandByRepository = map[string][]string{}
+	}
 	c.GitHubCommentMode = githubCommentMode(c.GitHubCommentMode)
 
 	return c
 }
 
-func (c JobConfig) commandForEvent(event string) []string {
+func (c JobConfig) commandForEvent(event string, repository string) []string {
 	event = strings.ToLower(strings.TrimSpace(event))
 	if len(c.CommandByEvent) > 0 {
 		if command := c.CommandByEvent[event]; len(command) > 0 {
+			return append([]string(nil), command...)
+		}
+	}
+	repository = normalizeRepository(repository)
+	if len(c.CommandByRepository) > 0 {
+		if command := c.CommandByRepository[repository]; len(command) > 0 {
 			return append([]string(nil), command...)
 		}
 	}
@@ -745,6 +756,27 @@ func eventCommandOverrides(getenv func(string) string) map[string][]string {
 		}
 	}
 	return overrides
+}
+
+func repositoryCommandOverrides(raw string) map[string][]string {
+	overrides := map[string][]string{}
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == ';'
+	}) {
+		repository, commandText, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		command := strings.Fields(commandText)
+		if len(command) > 0 {
+			overrides[normalizeRepository(repository)] = command
+		}
+	}
+	return overrides
+}
+
+func normalizeRepository(repository string) string {
+	return strings.ToLower(strings.TrimSpace(repository))
 }
 
 func githubCommentMode(value string) string {
