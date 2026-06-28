@@ -412,7 +412,7 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 
 	metadata := githubPayloadMetadata(event.Body)
 	repo := firstNonEmpty(job.Annotations["nova-sre.io/repository"], metadata.Repo)
-	status := "success"
+	status := "succeeded"
 	if result.Failed {
 		status = "failed"
 	}
