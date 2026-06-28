@@ -672,6 +672,48 @@ func TestDurationFromEnv(t *testing.T) {
 	}
 }
 
+func TestHTTPServerFromEnvDefaults(t *testing.T) {
+	server := httpServerFromEnv(http.NewServeMux())
+
+	if server.Addr != ":8080" {
+		t.Fatalf("expected default address :8080, got %q", server.Addr)
+	}
+	if server.ReadHeaderTimeout != 5*time.Second {
+		t.Fatalf("expected default read header timeout 5s, got %s", server.ReadHeaderTimeout)
+	}
+	if server.ReadTimeout != 15*time.Second {
+		t.Fatalf("expected default read timeout 15s, got %s", server.ReadTimeout)
+	}
+	if server.WriteTimeout != 30*time.Second {
+		t.Fatalf("expected default write timeout 30s, got %s", server.WriteTimeout)
+	}
+	if server.IdleTimeout != 60*time.Second {
+		t.Fatalf("expected default idle timeout 60s, got %s", server.IdleTimeout)
+	}
+}
+
+func TestHTTPServerFromEnvOverrides(t *testing.T) {
+	t.Setenv("NOVA_SRE_READ_HEADER_TIMEOUT", "1s")
+	t.Setenv("NOVA_SRE_READ_TIMEOUT", "2s")
+	t.Setenv("NOVA_SRE_WRITE_TIMEOUT", "3s")
+	t.Setenv("NOVA_SRE_IDLE_TIMEOUT", "4s")
+
+	server := httpServerFromEnv(http.NewServeMux())
+
+	if server.ReadHeaderTimeout != time.Second {
+		t.Fatalf("expected read header timeout 1s, got %s", server.ReadHeaderTimeout)
+	}
+	if server.ReadTimeout != 2*time.Second {
+		t.Fatalf("expected read timeout 2s, got %s", server.ReadTimeout)
+	}
+	if server.WriteTimeout != 3*time.Second {
+		t.Fatalf("expected write timeout 3s, got %s", server.WriteTimeout)
+	}
+	if server.IdleTimeout != 4*time.Second {
+		t.Fatalf("expected idle timeout 4s, got %s", server.IdleTimeout)
+	}
+}
+
 func webhookRequest(body []byte, deliveryID string, event string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set(githubDeliveryHeader, deliveryID)
