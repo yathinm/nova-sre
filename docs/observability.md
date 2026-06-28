@@ -76,6 +76,19 @@ The expected service names are:
 - `prometheus-server`
 - `grafana`
 
+Validate the checked-in Prometheus, Grafana, Terraform, and dashboard wiring:
+
+```sh
+make validate-observability-config
+```
+
+When Prometheus is port-forwarded, the same command can also verify the live
+scrape target:
+
+```sh
+PROMETHEUS_BASE_URL=http://localhost:9090 make validate-observability-config
+```
+
 ## Port-Forward the Stack
 
 Use separate terminals for long-running port-forwards.
