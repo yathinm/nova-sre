@@ -9,3 +9,10 @@ variable "environment" {
   type        = string
   default     = "local"
 }
+
+variable "grafana_admin_password" {
+  description = "Optional Grafana admin password. When unset, Terraform generates a local random password."
+  type        = string
+  default     = null
+  sensitive   = true
+}
