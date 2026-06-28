@@ -53,6 +53,7 @@ type runtimeConfig struct {
 	ActivityLimit       int    `json:"activity_limit"`
 	DeliveryCacheTTL    string `json:"delivery_cache_ttl"`
 	APIAuthEnabled      bool   `json:"api_auth_enabled"`
+	APICORSRestricted   bool   `json:"api_cors_restricted"`
 	RunnerNamespace     string `json:"runner_namespace,omitempty"`
 	RunnerImage         string `json:"runner_image,omitempty"`
 	RunnerJobTTLSeconds int32  `json:"runner_job_ttl_seconds,omitempty"`
@@ -101,6 +102,7 @@ func (s *Server) SetAPIToken(token string) {
 
 func (s *Server) SetAPIAllowedOrigins(raw string) {
 	s.apiOrigins = parseAllowedOrigins(raw)
+	s.runtimeConfig.APICORSRestricted = len(s.apiOrigins) > 0 && !containsOrigin(s.apiOrigins, "*")
 }
 
 func (s *Server) SetDeliveryCacheTTL(ttl time.Duration) {
@@ -359,6 +361,15 @@ func parseAllowedOrigins(raw string) []string {
 		origins = append(origins, origin)
 	}
 	return origins
+}
+
+func containsOrigin(origins []string, want string) bool {
+	for _, origin := range origins {
+		if origin == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) validAPIToken(r *http.Request) bool {

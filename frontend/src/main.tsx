@@ -39,6 +39,7 @@ type RuntimeConfig = {
   activity_limit?: number;
   delivery_cache_ttl?: string;
   api_auth_enabled?: boolean;
+  api_cors_restricted?: boolean;
   runner_namespace?: string;
   runner_image?: string;
   runner_job_ttl_seconds?: number;
@@ -462,12 +463,13 @@ async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCar
     const payload = await client.json("/api/config");
     const config = isRecord(payload) ? (payload as RuntimeConfig) : {};
     const authLabel = config.api_auth_enabled ? "Token" : "Open";
+    const corsLabel = config.api_cors_restricted ? "restricted CORS" : "wildcard CORS";
     const limit = typeof config.activity_limit === "number" ? config.activity_limit : 0;
     const ttl = textValue(config.runner_job_ttl_seconds ? `${config.runner_job_ttl_seconds}s jobs` : "", config.delivery_cache_ttl);
     setCard({
       label: "Runtime",
       value: authLabel,
-      detail: limit ? `${limit} records, ${ttl}` : "Runtime config loaded",
+      detail: limit ? `${limit} records, ${ttl}, ${corsLabel}` : `Runtime config loaded, ${corsLabel}`,
       tone: config.api_auth_enabled ? "ok" : "warn",
     });
   } catch (error) {
