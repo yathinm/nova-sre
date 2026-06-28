@@ -39,13 +39,15 @@ GitHub events and the control panel shows recent in-memory activity for the
 current server process.
 
 For the Minikube deployment path, create `nova-sre-secrets`, deploy the app, and
-port-forward the service instead:
+port-forward the services instead:
 
 ```sh
-make docker-build
-make deploy-apps
-make port-forward-server
+make local-up
 ```
+
+This starts managed API and frontend port-forwards in the background, validates
+the local stack, and leaves the control panel at `http://localhost:8081`. Stop
+those managed forwards later with `make local-down`.
 
 ## 2. Run the React Control Panel
 
@@ -59,7 +61,8 @@ Open `http://localhost:5173`. The panel defaults to `http://localhost:8080`.
 Change `frontend/public/config.js` or use the API base input if your API is on a
 different URL.
 
-For the Minikube deployment path, use the frontend service instead:
+For the Minikube deployment path, `make local-up` already forwards the frontend
+service. To run the frontend forward manually instead:
 
 ```sh
 make port-forward-frontend

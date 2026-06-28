@@ -60,6 +60,8 @@ management, and a more complete operator control surface.
   secret wiring, production image replacements, and the activity PVC.
 - Kubernetes secret setup can be synced from exported environment variables
   without putting secret values in `kubectl` command arguments.
+- A local stack helper can build/deploy, manage API/frontend port-forwards, and
+  validate the browser-ready control panel with `make local-up`.
 - A release checklist now covers preflight validation, image publishing,
   production overlay customization, rollout, smoke tests, monitoring, and
   rollback.
@@ -112,8 +114,8 @@ CI currently gates:
 
 - Promote the local file-backed activity store to production-grade persistence
   with persistent volumes or an external database.
-- Add a friendlier local setup command that checks dependencies, syncs secrets,
-  builds images, deploys, and opens the expected port-forwards.
+- Add a lightweight local dependency preflight that reports missing Docker,
+  Minikube, kubectl, Go, Python, Node, npm, Terraform, and tunnel tools.
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.
 - Add richer GitHub PR comment controls in the control panel instead of only

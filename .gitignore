@@ -29,3 +29,6 @@ override.tf.json
 
 # Kubernetes local files
 kubeconfig
+
+# Nova-SRE local helper state
+.local/
