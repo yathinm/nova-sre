@@ -189,6 +189,9 @@ jobs:
       - name: Validate Terraform
         run: make tf-validate
 
+      - name: Validate observability wiring
+        run: make validate-observability-config
+
   docker:
     name: Docker image builds
     needs: changes
