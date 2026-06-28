@@ -131,6 +131,42 @@ func TestBuildGitHubEventJobRequiresRunnerImage(t *testing.T) {
 	}
 }
 
+func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
+	values := map[string]string{
+		"RUNNER_JOB_NAMESPACE":       "runner-jobs",
+		"RUNNER_JOB_IMAGE":           "ghcr.io/example/nova-runner:test",
+		"RUNNER_REPO":                "acme/widgets",
+		"RUNNER_SHA":                 "abcdef",
+		"RUNNER_JOB_COMMAND":         "/bin/runner --once",
+		"RUNNER_JOB_TTL_SECONDS":     "900",
+		"RUNNER_JOB_BACKOFF_LIMIT":   "2",
+		"RUNNER_JOB_SERVICE_ACCOUNT": "nova-runner",
+	}
+
+	config := JobConfigFromEnv(func(name string) string {
+		return values[name]
+	})
+
+	if config.Namespace != "runner-jobs" || config.Image != "ghcr.io/example/nova-runner:test" {
+		t.Fatalf("unexpected namespace/image: %#v", config)
+	}
+	if config.Repo != "acme/widgets" || config.SHA != "abcdef" {
+		t.Fatalf("unexpected repo metadata: %#v", config)
+	}
+	if got := config.Command; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--once" {
+		t.Fatalf("unexpected command: %#v", got)
+	}
+	if config.TTLSecondsFinished == nil || *config.TTLSecondsFinished != 900 {
+		t.Fatalf("expected ttl 900, got %#v", config.TTLSecondsFinished)
+	}
+	if config.BackoffLimit == nil || *config.BackoffLimit != 2 {
+		t.Fatalf("expected backoff 2, got %#v", config.BackoffLimit)
+	}
+	if config.ServiceAccountName != "nova-runner" {
+		t.Fatalf("expected service account nova-runner, got %q", config.ServiceAccountName)
+	}
+}
+
 func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	creator := &recordingCreator{}
 	runner := NewJobRunner(JobConfig{
