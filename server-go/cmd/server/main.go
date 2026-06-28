@@ -54,15 +54,22 @@ func main() {
 		server.SetKubernetesJobLister(creator.Jobs)
 	}
 
-	httpServer := &http.Server{
-		Addr:              ":8080",
-		Handler:           server,
-		ReadHeaderTimeout: durationFromEnv("NOVA_SRE_READ_HEADER_TIMEOUT", 5*time.Second),
-	}
+	httpServer := httpServerFromEnv(server)
 
 	log.Printf("nova-sre server starting on %s", httpServer.Addr)
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
+	}
+}
+
+func httpServerFromEnv(handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              ":8080",
+		Handler:           handler,
+		ReadHeaderTimeout: durationFromEnv("NOVA_SRE_READ_HEADER_TIMEOUT", 5*time.Second),
+		ReadTimeout:       durationFromEnv("NOVA_SRE_READ_TIMEOUT", 15*time.Second),
+		WriteTimeout:      durationFromEnv("NOVA_SRE_WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:       durationFromEnv("NOVA_SRE_IDLE_TIMEOUT", 60*time.Second),
 	}
 }
 
