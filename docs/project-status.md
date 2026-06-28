@@ -48,6 +48,8 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - Go server can persist bounded recent activity to an atomic JSON snapshot and
   reload it on startup; the local Kubernetes deployment mounts this path for
   server container restarts.
+- A production-oriented Kubernetes overlay now provides starter TLS ingress and
+  PVC-backed activity storage manifests.
 - Runtime config reports whether server-to-agent auth is enabled without exposing
   the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
@@ -101,8 +103,8 @@ CI currently gates:
   Kubernetes test environment without relying on a developer laptop.
 - Add richer GitHub PR comment controls in the control panel instead of only
   accepting request-level create/upsert settings from the diagnosis API.
-- Add production-ready ingress, TLS, domain configuration, and environment
-  overlays instead of relying on port-forwards and temporary tunnels.
+- Customize and harden the production ingress/TLS overlay for the target domain,
+  ingress controller, certificate issuer, image registry, and secret manager.
 - Decide how API auth and CORS should be configured outside isolated local demos.
 - Add release/deployment documentation for non-local environments.
 
