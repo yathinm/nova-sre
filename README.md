@@ -291,7 +291,7 @@ make local-doctor
 | `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
 | `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
 | `make validate-api-cors` | Checks browser CORS headers on `/healthz`, `/metrics`, and `/api/config`. |
-| `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax checks. |
+| `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax and local app contract checks. |
 | `make validate-production-k8s` | Renders the production overlay and checks TLS ingress, API auth/CORS secret wiring, and activity PVC wiring. |
 | `make set-production-images` | Stamps production overlay images with `RELEASE_TAG` and optional `PRODUCTION_IMAGE_REGISTRY`. |
 | `make validate-release-tools` | Tests release helper scripts against a temporary production overlay copy. |

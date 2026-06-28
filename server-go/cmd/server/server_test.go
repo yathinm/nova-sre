@@ -202,6 +202,38 @@ func TestAPIEventsTracksWebhookAndRunnerStatus(t *testing.T) {
 	}
 }
 
+func TestActivityStoreObserveJobUsesObservedAt(t *testing.T) {
+	activity := newActivityStore(10)
+	storeNow := time.Date(2026, 6, 28, 9, 0, 0, 0, time.UTC)
+	observedAt := storeNow.Add(3 * time.Minute)
+	activity.now = func() time.Time { return storeNow }
+
+	activity.recordReceived(githubEvent{
+		DeliveryID: "delivery-1",
+		Event:      "push",
+		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef"}`),
+	})
+	activity.ObserveJob(runner.JobStatusUpdate{
+		DeliveryID: "delivery-1",
+		Event:      "push",
+		Status:     "succeeded",
+		Namespace:  "nova-sre",
+		JobName:    "nova-sre-push-abc12",
+		ObservedAt: observedAt,
+	})
+
+	records := activity.recent(10)
+	if len(records) != 1 {
+		t.Fatalf("expected one activity record, got %#v", records)
+	}
+	if !records[0].ReceivedAt.Equal(storeNow) {
+		t.Fatalf("expected received_at to keep store timestamp %s, got %s", storeNow, records[0].ReceivedAt)
+	}
+	if !records[0].UpdatedAt.Equal(observedAt) {
+		t.Fatalf("expected updated_at to use observed_at %s, got %s", observedAt, records[0].UpdatedAt)
+	}
+}
+
 func TestAPIListLimitIsBoundedByActivityStore(t *testing.T) {
 	activity := newActivityStore(2)
 	server := NewServerWithEnqueuerAndActivity("", func(_ context.Context, event githubEvent) error {

@@ -138,7 +138,7 @@ func (s *activityStore) ObserveJob(update runner.JobStatusUpdate) {
 	if s == nil {
 		return
 	}
-	s.update(update.DeliveryID, func(record activityRecord) activityRecord {
+	s.updateAt(update.DeliveryID, update.ObservedAt, func(record activityRecord) activityRecord {
 		record.Event = firstNonEmpty(record.Event, update.Event)
 		record.Repository = firstNonEmpty(update.Repository, record.Repository)
 		record.SHA = firstNonEmpty(update.SHA, record.SHA)
@@ -237,10 +237,17 @@ func (s *activityStore) recentJobs(limit int) []activityRecord {
 }
 
 func (s *activityStore) update(deliveryID string, mutate func(activityRecord) activityRecord) {
+	s.updateAt(deliveryID, time.Time{}, mutate)
+}
+
+func (s *activityStore) updateAt(deliveryID string, observedAt time.Time, mutate func(activityRecord) activityRecord) {
 	if s == nil || strings.TrimSpace(deliveryID) == "" {
 		return
 	}
-	now := s.timestamp()
+	now := observedAt.UTC()
+	if now.IsZero() {
+		now = s.timestamp()
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -97,6 +97,34 @@ def test_diagnose_endpoint_uses_safe_fallback_for_empty_logs() -> None:
     assert "```log\nNo log excerpt was available for this diagnosis.\n```" in body["pr_comment"]
 
 
+def test_diagnose_endpoint_uses_runner_context_when_logs_are_empty() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-runner",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "job_name": "nova-sre-workflow-run-abc",
+            "namespace": "nova-sre",
+            "reason": "BackoffLimitExceeded",
+            "message": "Job failed after retry budget was exhausted.",
+            "logs": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "identified"
+    assert body["result"]["failure_classification"] == "runner_failure"
+    assert body["summary"] == "Runner reason: BackoffLimitExceeded"
+    assert "Kubernetes runner job failed" in body["root_cause"]
+    assert "Runner message: Job failed after retry budget was exhausted." in body["pr_comment"]
+    assert "Pod status, events, image pull state, and resource limits" in body["suggested_fix"]
+
+
 def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata(monkeypatch) -> None:
     monkeypatch.setattr(github_comment_client, "token", None)
     client = TestClient(app)

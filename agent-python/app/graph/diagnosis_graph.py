@@ -75,6 +75,23 @@ FAILURE_PATTERNS = (
         "environment is healthy, and retry only after the reported resource issue is addressed.",
     ),
     (
+        "runner_failure",
+        (
+            "backofflimitexceeded",
+            "backoff limit exceeded",
+            "containercannotrun",
+            "crashloopbackoff",
+            "errimagepull",
+            "imagepullbackoff",
+            "job failed",
+            "oomkilled",
+            "pod failed",
+        ),
+        "The Kubernetes runner job failed before producing a more specific application signal.",
+        "Inspect the runner Pod status, events, image pull state, and resource limits, then "
+        "re-run the job after addressing the reported Kubernetes failure reason.",
+    ),
+    (
         "runtime_failure",
         ("traceback", "exception", "panic", "segmentation fault", "fatal"),
         "A runtime exception or crash is causing the failure.",
@@ -98,10 +115,14 @@ def format_log_block(excerpt: str) -> str:
 
 def parse_logs(state: DiagnosisState) -> dict:
     lines = [line.strip() for line in state.logs.splitlines() if line.strip()]
+    runner_context = _runner_context_lines(state)
     relevant_lines = [
         line for line in lines if any(marker in line.lower() for marker in ERROR_MARKERS)
     ]
-    parsed_logs = relevant_lines[:20] or lines[-20:]
+    if relevant_lines:
+        parsed_logs = (relevant_lines + runner_context)[:20]
+    else:
+        parsed_logs = (runner_context + lines[-20:])[:20]
     log_excerpt = "\n".join(parsed_logs[:10]).strip()
 
     return {
@@ -196,6 +217,15 @@ def validate_markdown(state: DiagnosisState) -> dict:
 
 def validate_pr_comment(state: DiagnosisState) -> dict:
     return validate_markdown(state)
+
+
+def _runner_context_lines(state: DiagnosisState) -> list[str]:
+    context: list[str] = []
+    if state.reason:
+        context.append(f"Runner reason: {state.reason}")
+    if state.message:
+        context.append(f"Runner message: {state.message}")
+    return [neutralize_markdown_fences(line.strip()) for line in context if line.strip()]
 
 
 def _markdown_validation_errors(comment: str) -> list[str]:

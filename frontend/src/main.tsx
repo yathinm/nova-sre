@@ -268,6 +268,7 @@ function App() {
 
       <section className="content-grid">
         <BreakdownPanel summary={activitySummary} />
+        <RunnerIssuePanel jobs={jobs} />
         <CommentControlPanel config={runtimeConfig} jobs={jobs.items} status={jobs.status} />
         <DataPanel
           eyebrow="GitHub Webhooks"
@@ -306,6 +307,89 @@ function App() {
         />
       </section>
     </main>
+  );
+}
+
+function RunnerIssuePanel({ jobs }: { jobs: ListState<ApiRecord> }) {
+  const issue = latestRunnerIssue(jobs.items);
+  const hasLoadedJobs = jobs.status === "ready" || jobs.status === "empty";
+
+  return (
+    <section className="panel issue-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Runner Attention</p>
+          <h2>Latest Issue</h2>
+        </div>
+        <div className="panel-meta">
+          <span className="source-label">{jobs.source}</span>
+          {jobs.updatedAt ? <time dateTime={new Date(jobs.updatedAt).toISOString()}>{formatTime(jobs.updatedAt, "time")}</time> : null}
+        </div>
+      </div>
+      {issue ? <RunnerIssueCard item={issue} /> : <RunnerIssueEmptyState status={jobs.status} message={jobs.message} hasLoadedJobs={hasLoadedJobs} />}
+    </section>
+  );
+}
+
+function RunnerIssueCard({ item }: { item: ApiRecord }) {
+  const status = recordStatus(item);
+  const commentUrl = githubCommentURL(item);
+  const observedAt = textValue(item.observed_time, item.observedTime, item.updated_at, item.updatedAt, item.completed_at, "");
+
+  return (
+    <div className="issue-card">
+      <div className="issue-summary">
+        <StatusPill value={status} />
+        <div>
+          <h3>{jobTitle(item)}</h3>
+          <p>{jobDetail(item)}</p>
+        </div>
+      </div>
+      <dl className="issue-meta-grid">
+        <div>
+          <dt>Job</dt>
+          <dd>
+            <CodeValue value={textValue(item.job_name, item.jobName, item.name)} />
+          </dd>
+        </div>
+        <div>
+          <dt>Repository</dt>
+          <dd className="truncate-value">{repositoryName(item)}</dd>
+        </div>
+        <div>
+          <dt>Event</dt>
+          <dd>{textValue(item.event, item.type)}</dd>
+        </div>
+        <div>
+          <dt>Observed</dt>
+          <dd>
+            <TimeValue value={observedAt} />
+          </dd>
+        </div>
+      </dl>
+      {commentUrl ? (
+        <a href={commentUrl} target="_blank" rel="noreferrer" className="detail-link">
+          Open related PR comment
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+function RunnerIssueEmptyState({ status, message, hasLoadedJobs }: { status: LoadStatus; message: string; hasLoadedJobs: boolean }) {
+  const stateTone = status === "error" ? "error" : status === "loading" ? "loading" : "empty";
+  const title = status === "error" ? "Issue scan unavailable" : hasLoadedJobs ? "No runner issues in recent jobs" : "Waiting for runner jobs";
+  const detail =
+    message ||
+    (hasLoadedJobs
+      ? "Recent runner jobs do not include failed, cancelled, rejected, or diagnosis error statuses."
+      : "Failed runner jobs will be highlighted here after the first refresh.");
+
+  return (
+    <div className={`state ${stateTone}`}>
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </div>
   );
 }
 
@@ -782,6 +866,10 @@ function resultFromBooleans(item: ApiRecord) {
   return "pending";
 }
 
+function recordStatus(item: ApiRecord) {
+  return textValue(item.status, item.result, resultFromBooleans(item)).trim().toLowerCase();
+}
+
 function textValue(...values: unknown[]) {
   const value = values.find((candidate) => candidate !== undefined && candidate !== null && String(candidate).trim() !== "");
   return value === undefined ? "Unknown" : String(value);
@@ -804,6 +892,14 @@ function toneForStatus(status: string) {
 
 function jobDetail(item: ApiRecord) {
   return textValue(item.message, item.reason, item.github_comment_error, item.github_comment_action, "No detail");
+}
+
+function jobTitle(item: ApiRecord) {
+  return `${statusLabel(recordStatus(item))} runner job`;
+}
+
+function latestRunnerIssue(items: ApiRecord[]) {
+  return items.find((item) => toneForStatus(recordStatus(item)) === "error") || null;
 }
 
 function githubCommentURL(item: ApiRecord) {

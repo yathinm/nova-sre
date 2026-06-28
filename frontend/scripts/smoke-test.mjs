@@ -24,6 +24,9 @@ const checks = [
   ["comment controls panel", "function CommentControlPanel"],
   ["comment action counts", "function commentActionCounts"],
   ["comment mode guidance", "NOVA_SRE_GITHUB_COMMENT_MODE=upsert"],
+  ["runner issue panel", "function RunnerIssuePanel"],
+  ["runner issue selector", "function latestRunnerIssue"],
+  ["runner attention copy", "Runner Attention"],
 ];
 
 const failures = checks

@@ -35,9 +35,10 @@ management, and a more complete operator control surface.
 - Runner status is normalized into `succeeded`, duplicate, error, and other
   dashboard-friendly buckets, including diagnosis delivery success or failure
   after failed runner Jobs.
-- Python agent accepts runner diagnosis payloads, truncates oversized normalized
-  logs, produces deterministic fallback diagnoses, and can upsert GitHub PR
-  comments when metadata and token permissions are present.
+- Python agent accepts runner diagnosis payloads, uses Kubernetes runner
+  reason/message as fallback evidence when pod logs are empty, truncates
+  oversized normalized logs, produces deterministic fallback diagnoses, and can
+  upsert GitHub PR comments when metadata and token permissions are present.
 - GitHub PR comments include a hidden Nova-SRE marker, update the existing
   Nova-SRE diagnosis comment by default, support explicit create mode, and
   return sanitized create/update/skip/failure status for control-panel display.
@@ -50,8 +51,8 @@ management, and a more complete operator control surface.
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline
   totals, status breakdowns, recent events, recent jobs, activity persistence
-  mode, GitHub PR comment links/actions, and job-level failure details such as
-  GitHub PR comment permission errors.
+  mode, the latest runner issue, GitHub PR comment links/actions, and job-level
+  failure details such as GitHub PR comment permission errors.
 - Go server can persist bounded recent activity to an atomic JSON snapshot and
   reload it on startup; the local Kubernetes deployment mounts this path for
   server container restarts.
