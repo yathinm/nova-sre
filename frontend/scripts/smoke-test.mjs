@@ -12,6 +12,7 @@ const checks = [
   ["runtime summary card", 'label: "Runtime"'],
   ["pipeline metrics filter", 'name.startsWith("pipeline_")'],
   ["delivery plural copy", 'summaryDetail(events, "delivery", "deliveries")'],
+  ["runtime cors status", "api_cors_restricted"],
 ];
 
 const failures = checks

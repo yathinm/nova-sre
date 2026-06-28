@@ -500,6 +500,7 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 		RunnerJobTTLSeconds: 900,
 	})
 	server.SetAPIToken("control-panel-token")
+	server.SetAPIAllowedOrigins("https://panel.example.com")
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	req.Header.Set(apiTokenHeader, "control-panel-token")
 	rec := httptest.NewRecorder()
@@ -519,11 +520,27 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 	if !config.APIAuthEnabled {
 		t.Fatalf("expected api auth to be enabled: %#v", config)
 	}
+	if !config.APICORSRestricted {
+		t.Fatalf("expected api cors to be restricted: %#v", config)
+	}
 	if config.RunnerNamespace != "runner-jobs" || config.RunnerImage != "nova-sre-runner:local" {
 		t.Fatalf("unexpected runner config: %#v", config)
 	}
-	if strings.Contains(rec.Body.String(), "webhook-secret") || strings.Contains(rec.Body.String(), "control-panel-token") {
+	if strings.Contains(rec.Body.String(), "webhook-secret") ||
+		strings.Contains(rec.Body.String(), "control-panel-token") ||
+		strings.Contains(rec.Body.String(), "panel.example.com") {
 		t.Fatalf("config response leaked a secret: %s", rec.Body.String())
+	}
+}
+
+func TestAPIConfigReportsWildcardCORSAsUnrestricted(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIAllowedOrigins("*")
+
+	config := getJSON[runtimeConfig](t, server, "/api/config")
+
+	if config.APICORSRestricted {
+		t.Fatalf("expected wildcard cors to be unrestricted: %#v", config)
 	}
 }
 
