@@ -8,8 +8,14 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY --from=build /app/dist /opt/nova-sre/html
 
-EXPOSE 80
+RUN mkdir -p /tmp/nova-sre-html /tmp/nginx/client_body /tmp/nginx/proxy /tmp/nginx/fastcgi /tmp/nginx/uwsgi /tmp/nginx/scgi \
+  && chown -R nginx:nginx /opt/nova-sre/html /tmp/nova-sre-html /tmp/nginx
 
-CMD ["/bin/sh", "-c", "escaped=$(printf '%s' \"${NOVA_SRE_API_BASE:-}\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); printf 'window.NOVA_SRE_API_BASE = \"%s\";\\n' \"$escaped\" > /usr/share/nginx/html/config.js; nginx -g 'daemon off;'"]
+EXPOSE 8080
+
+USER nginx
+
+CMD ["/bin/sh", "-ec", "mkdir -p /tmp/nova-sre-html /tmp/nginx/client_body /tmp/nginx/proxy /tmp/nginx/fastcgi /tmp/nginx/uwsgi /tmp/nginx/scgi; rm -rf /tmp/nova-sre-html/*; cp -R /opt/nova-sre/html/. /tmp/nova-sre-html/; escaped=$(printf '%s' \"${NOVA_SRE_API_BASE:-}\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'); printf 'window.NOVA_SRE_API_BASE = \"%s\";\\n' \"$escaped\" > /tmp/nova-sre-html/config.js; nginx -g 'daemon off;'"]
