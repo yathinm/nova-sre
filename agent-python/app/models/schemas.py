@@ -1,6 +1,5 @@
 import os
 from datetime import datetime
-from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
