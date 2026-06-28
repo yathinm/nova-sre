@@ -2,6 +2,7 @@
   color-scheme: light;
   --bg: #f5f7f8;
   --panel: #ffffff;
+  --panel-soft: #fbfcfd;
   --ink: #172026;
   --muted: #5e6b73;
   --line: #d8e0e5;
@@ -172,6 +173,81 @@ h2 {
   background: #fff8eb;
 }
 
+.workflow-guide {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.4fr);
+  gap: 18px;
+  align-items: stretch;
+  margin-bottom: 18px;
+  border: 1px solid #c9dde3;
+  border-radius: 12px;
+  padding: 20px;
+  background:
+    linear-gradient(135deg, rgba(37, 111, 122, 0.1), rgba(255, 255, 255, 0.82)),
+    var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.workflow-guide h2 {
+  font-size: 1.45rem;
+}
+
+.workflow-guide p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.guide-card,
+.guide-note {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 13px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.guide-card span {
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.guide-card strong {
+  display: block;
+  margin: 9px 0 5px;
+  font-size: 1rem;
+}
+
+.guide-card small,
+.guide-note span {
+  color: var(--muted);
+  line-height: 1.42;
+}
+
+.guide-card.ok,
+.guide-note.ok {
+  border-color: #b9dec9;
+  background: var(--soft-good);
+}
+
+.guide-note.warn {
+  border-color: #f4d195;
+  background: var(--soft-warn);
+}
+
+.guide-note.error {
+  border-color: #f2b8b5;
+  background: var(--soft-bad);
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -241,9 +317,17 @@ h2 {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  align-items: center;
+  align-items: flex-start;
   padding: 18px;
   border-bottom: 1px solid var(--line);
+}
+
+.panel-copy {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .panel-meta {
@@ -282,6 +366,10 @@ h2 {
   font-size: 0.9rem;
 }
 
+.state small {
+  line-height: 1.4;
+}
+
 .state.loading {
   background: #f2f8fa;
 }
@@ -305,6 +393,10 @@ h2 {
 }
 
 .comment-controls {
+  grid-column: 1 / -1;
+}
+
+.operator-guide {
   grid-column: 1 / -1;
 }
 
@@ -339,6 +431,32 @@ h2 {
   line-height: 1.45;
 }
 
+.issue-guidance {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.issue-guidance div {
+  border: 1px solid #f4d195;
+  border-radius: 7px;
+  padding: 13px;
+  background: #fff8eb;
+}
+
+.issue-guidance span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--warn);
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.issue-guidance strong {
+  line-height: 1.42;
+}
+
 .issue-meta-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -364,6 +482,23 @@ h2 {
 
 .issue-meta-grid dd {
   margin: 0;
+}
+
+.guide-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+}
+
+.guide-note {
+  display: grid;
+  gap: 7px;
+  background: var(--panel-soft);
+}
+
+.guide-note strong {
+  font-size: 0.95rem;
 }
 
 .comment-control-grid {
@@ -597,6 +732,18 @@ tbody tr:last-child td {
   font-weight: 700;
 }
 
+.status-with-help {
+  display: grid;
+  gap: 6px;
+  max-width: 230px;
+}
+
+.status-with-help small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
 .muted-value {
   color: var(--muted);
 }
@@ -656,6 +803,15 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .workflow-guide {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-steps,
+  .guide-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .comment-control-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -692,6 +848,16 @@ tbody tr:last-child td {
   }
 
   .comment-control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-guide {
+    padding: 16px;
+  }
+
+  .workflow-steps,
+  .guide-list,
+  .issue-guidance {
     grid-template-columns: 1fr;
   }
 

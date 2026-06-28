@@ -198,6 +198,50 @@ def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata(monkeypat
     )
 
 
+def test_diagnose_endpoint_prioritizes_go_test_failure_over_runner_context() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-real-unhealthy-pr",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "job_name": "nova-sre-real-unhealthy-pr-17",
+            "namespace": "nova-sre",
+            "reason": "BackoffLimitExceeded",
+            "message": "Job failed after retry budget was exhausted.",
+            "logs": [
+                {
+                    "pod": "runner-pod",
+                    "container": "runner",
+                    "logs": "\n".join(
+                        [
+                            "go: downloading github.com/pkg/errors v0.9.1",
+                            "=== RUN   TestRealUnhealthyPRSignalForNovaSRE",
+                            "--- FAIL: TestRealUnhealthyPRSignalForNovaSRE (0.00s)",
+                            "    real_unhealthy_test.go:17: intentional real unhealthy PR signal for Nova-SRE",
+                            "FAIL\tgithub.com/acme/widgets/server-go/cmd/server\t0.017s",
+                        ]
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "identified"
+    assert body["result"]["failure_classification"] == "test_failure"
+    assert "TestRealUnhealthyPRSignalForNovaSRE" in body["summary"]
+    assert "BackoffLimitExceeded" not in body["summary"]
+    assert "github.com/pkg/errors" not in body["summary"]
+    assert "intentional real unhealthy PR signal for Nova-SRE" in body["pr_comment"]
+    assert "go: downloading github.com/pkg/errors" not in body["pr_comment"]
+    assert "Kubernetes runner job failed" not in body["root_cause"]
+
+
 def test_diagnose_endpoint_posts_comment_from_runner_repository_metadata(monkeypatch) -> None:
     async def post_comment(
         *,

@@ -19,6 +19,7 @@ const AUTO_REFRESH_MS = 30_000;
 
 type Tone = "ok" | "warn" | "error";
 type LoadStatus = "idle" | "loading" | "ready" | "empty" | "error";
+type StatusContext = "webhook" | "runner";
 type CardState = {
   label: string;
   value: string;
@@ -191,7 +192,9 @@ function App() {
         <div>
           <p className="eyebrow">Nova-SRE</p>
           <h1>Control Panel</h1>
-          <p className="subtitle">Live signal from webhook ingestion and Kubernetes runner activity.</p>
+          <p className="subtitle">
+            Follow a GitHub delivery from webhook acceptance through Kubernetes runner work, agent diagnosis, and PR comment delivery.
+          </p>
         </div>
         <form
           className="api-control"
@@ -236,6 +239,8 @@ function App() {
 
       {notice ? <section className="notice">{notice}</section> : null}
 
+      <WorkflowGuide />
+
       <section className="summary-grid" aria-label="Service summary">
         <SummaryCard card={healthCard} />
         <SummaryCard card={metricsCard} />
@@ -270,43 +275,123 @@ function App() {
         <BreakdownPanel summary={activitySummary} />
         <RunnerIssuePanel jobs={jobs} />
         <CommentControlPanel config={runtimeConfig} jobs={jobs.items} status={jobs.status} />
+        <OperatorGuidePanel />
         <DataPanel
           eyebrow="GitHub Webhooks"
           title="Recent Events"
+          description="Deliveries accepted by the Go API. Accepted means Nova-SRE verified and queued the event; runner and test outcomes appear separately."
           source={events.source}
           message={events.message}
           status={events.status}
           updatedAt={events.updatedAt}
           emptyTitle="No events yet"
+          stateHelp={eventsStateHelp(events.status)}
           headers={["Delivery", "Event", "Repository", "Received", "Status"]}
           rows={events.items.slice(0, 20).map((item) => [
             <CodeValue key="delivery" value={textValue(item.delivery_id, item.deliveryID, item.id)} />,
             <strong key="event">{textValue(item.event, item.type)}</strong>,
             <span key="repo" className="truncate-value">{repositoryName(item)}</span>,
             <TimeValue key="received" value={textValue(item.received_at, item.receivedAt, item.created_at, item.createdAt, item.observed_time, "")} />,
-            <StatusPill key="status" value={textValue(item.status, item.result, "accepted")} />,
+            <StatusWithHelp key="status" value={textValue(item.status, item.result, "accepted")} context="webhook" />,
           ])}
         />
         <DataPanel
           eyebrow="Kubernetes Runner"
           title="Recent Jobs"
+          description="Runner observations show what happened after a supported webhook was accepted. Infrastructure failures and test failures can both surface here."
           source={jobs.source}
           message={jobs.message}
           status={jobs.status}
           updatedAt={jobs.updatedAt}
           emptyTitle="No jobs yet"
+          stateHelp={jobsStateHelp(jobs.status)}
           headers={["Job", "Namespace", "Event", "Observed", "Result", "Detail"]}
           rows={jobs.items.slice(0, 20).map((item) => [
             <CodeValue key="job" value={textValue(item.job_name, item.jobName, item.name)} />,
             <CodeValue key="namespace" value={textValue(item.namespace, "nova-sre")} />,
             <strong key="event">{textValue(item.event, item.type)}</strong>,
             <TimeValue key="observed" value={textValue(item.observed_time, item.observedTime, item.created_at, item.createdAt, item.completed_at, "")} />,
-            <StatusPill key="status" value={textValue(item.status, item.result, resultFromBooleans(item))} />,
+            <JobStatusValue key="status" item={item} />,
             <JobDetailValue key="detail" item={item} />,
           ])}
         />
       </section>
     </main>
+  );
+}
+
+function WorkflowGuide() {
+  return (
+    <section className="workflow-guide" aria-label="How to read this dashboard">
+      <div>
+        <p className="eyebrow">How to Read It</p>
+        <h2>One delivery, four checkpoints</h2>
+        <p>
+          Start with webhook acceptance, then confirm runner execution, diagnosis, and PR comment delivery. A green webhook does not mean tests
+          passed; it means Nova-SRE accepted the delivery and moved it to the next checkpoint.
+        </p>
+      </div>
+      <div className="workflow-steps">
+        <GuideCard label="1. Webhook" title="Accepted" detail="Signature verified and the event was recorded or queued." tone="ok" />
+        <GuideCard label="2. Runner" title="Executed" detail="Kubernetes job status tells you whether the automation ran cleanly." />
+        <GuideCard label="3. Agent" title="Diagnosed" detail="Failed jobs are summarized with logs, runner reason, or fallback evidence." />
+        <GuideCard label="4. Comment" title="Posted" detail="PR comment actions show whether the diagnosis reached GitHub." />
+      </div>
+    </section>
+  );
+}
+
+function GuideCard({ label, title, detail, tone }: { label: string; title: string; detail: string; tone?: Tone }) {
+  return (
+    <article className={["guide-card", tone].filter(Boolean).join(" ")}>
+      <span>{label}</span>
+      <strong>{title}</strong>
+      <small>{detail}</small>
+    </article>
+  );
+}
+
+function OperatorGuidePanel() {
+  return (
+    <section className="panel operator-guide">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Operator Guide</p>
+          <h2>Common states and next steps</h2>
+          <p className="panel-copy">Use these interpretations before deciding whether to redeliver a webhook, inspect Kubernetes, or review a PR comment.</p>
+        </div>
+      </div>
+      <div className="guide-list">
+        <GuideNote
+          title="Webhook accepted"
+          detail="The delivery was authenticated and recorded. Check the runner panel next; acceptance alone does not mean the repository tests passed."
+        />
+        <GuideNote
+          title="Runner job failed"
+          detail="The Kubernetes job did not complete successfully. Inspect the reason/detail first to separate infrastructure failures from real test failures."
+          tone="error"
+        />
+        <GuideNote
+          title="BackoffLimitExceeded"
+          detail="Kubernetes retried the pod until the job hit its retry limit. Start with pod events and logs; treat it as runner/runtime trouble unless logs show test assertions."
+          tone="error"
+        />
+        <GuideNote
+          title="Diagnosis or comment skipped"
+          detail="The agent may have produced a fallback diagnosis, but GitHub posting can be skipped by missing PR metadata, missing token, or disabled comment settings."
+          tone="warn"
+        />
+      </div>
+    </section>
+  );
+}
+
+function GuideNote({ title, detail, tone }: { title: string; detail: string; tone?: Tone }) {
+  return (
+    <article className={["guide-note", tone].filter(Boolean).join(" ")}>
+      <strong>{title}</strong>
+      <span>{detail}</span>
+    </article>
   );
 }
 
@@ -335,6 +420,8 @@ function RunnerIssueCard({ item }: { item: ApiRecord }) {
   const status = recordStatus(item);
   const commentUrl = githubCommentURL(item);
   const observedAt = textValue(item.observed_time, item.observedTime, item.updated_at, item.updatedAt, item.completed_at, "");
+  const meaning = runnerMeaning(item);
+  const nextStep = runnerNextStep(item);
 
   return (
     <div className="issue-card">
@@ -343,6 +430,16 @@ function RunnerIssueCard({ item }: { item: ApiRecord }) {
         <div>
           <h3>{jobTitle(item)}</h3>
           <p>{jobDetail(item)}</p>
+        </div>
+      </div>
+      <div className="issue-guidance">
+        <div>
+          <span>What it means</span>
+          <strong>{meaning}</strong>
+        </div>
+        <div>
+          <span>Next step</span>
+          <strong>{nextStep}</strong>
         </div>
       </div>
       <dl className="issue-meta-grid">
@@ -410,6 +507,7 @@ function CommentControlPanel({ config, jobs, status }: { config: RuntimeConfig |
         <div>
           <p className="eyebrow">GitHub PR Comments</p>
           <h2>Comment Controls</h2>
+          <p className="panel-copy">Tracks whether failed PR diagnoses were created, updated, skipped, or blocked before reaching GitHub.</p>
         </div>
         <div className="panel-meta">
           <span className="source-label">/api/config + /api/jobs</span>
@@ -466,6 +564,7 @@ function BreakdownPanel({ summary }: { summary: ActivitySummaryState }) {
         <div>
           <p className="eyebrow">Activity Summary</p>
           <h2>Status Breakdown</h2>
+          <p className="panel-copy">A quick split of recent webhook and runner activity so unusual status buckets stand out before you scan rows.</p>
         </div>
         <div className="panel-meta">
           <span className="source-label">{summary.source}</span>
@@ -522,21 +621,25 @@ function SummaryCard({ card }: { card: CardState }) {
 function DataPanel({
   eyebrow,
   title,
+  description,
   source,
   message,
   status,
   updatedAt,
   emptyTitle,
+  stateHelp,
   headers,
   rows,
 }: {
   eyebrow: string;
   title: string;
+  description?: string;
   source: string;
   message: string;
   status: LoadStatus;
   updatedAt: number | null;
   emptyTitle: string;
+  stateHelp?: string;
   headers: string[];
   rows: Array<Array<string | ReactNode>>;
 }) {
@@ -549,6 +652,7 @@ function DataPanel({
         <div>
           <p className="eyebrow">{eyebrow}</p>
           <h2>{title}</h2>
+          {description ? <p className="panel-copy">{description}</p> : null}
         </div>
         <div className="panel-meta">
           <span className="source-label">{source}</span>
@@ -559,6 +663,7 @@ function DataPanel({
         <div className={`state ${stateTone}`}>
           <strong>{status === "empty" ? emptyTitle : titleCase(status)}</strong>
           <span>{message}</span>
+          {stateHelp ? <small>{stateHelp}</small> : null}
         </div>
       ) : null}
       {showTable ? (
@@ -592,6 +697,26 @@ function DataPanel({
 function StatusPill({ value }: { value: string }) {
   const normalized = value.trim().toLowerCase();
   return <span className={`pill ${toneForStatus(normalized)}`}>{statusLabel(normalized)}</span>;
+}
+
+function StatusWithHelp({ value, context }: { value: string; context: StatusContext }) {
+  const detail = context === "webhook" ? webhookStatusHelp(value) : runnerStatusHelp(value);
+  return (
+    <span className="status-with-help">
+      <StatusPill value={value} />
+      <small>{detail}</small>
+    </span>
+  );
+}
+
+function JobStatusValue({ item }: { item: ApiRecord }) {
+  const status = textValue(item.status, item.result, resultFromBooleans(item));
+  return (
+    <span className="status-with-help">
+      <StatusPill value={status} />
+      <small>{runnerStatusHelp(status, item)}</small>
+    </span>
+  );
 }
 
 function CodeValue({ value }: { value: string }) {
@@ -894,6 +1019,57 @@ function jobDetail(item: ApiRecord) {
   return textValue(item.message, item.reason, item.github_comment_error, item.github_comment_action, "No detail");
 }
 
+function jobReason(item: ApiRecord) {
+  return optionalText(item.reason, item.message, item.status, item.result, item.github_comment_error).toLowerCase();
+}
+
+function isBackoffLimitExceeded(item: ApiRecord) {
+  return jobReason(item).includes("backofflimitexceeded");
+}
+
+function runnerMeaning(item: ApiRecord) {
+  if (isBackoffLimitExceeded(item)) {
+    return "Kubernetes exhausted the job retry limit before the runner finished.";
+  }
+  if (isCommentFailure(item)) {
+    return "The runner diagnosis reached GitHub commenting, but posting failed.";
+  }
+  if (githubCommentAction(item).trim().toLowerCase() === "skipped") {
+    return "Diagnosis comment posting was skipped or lacked required metadata.";
+  }
+  const status = recordStatus(item);
+  if (["failed", "error", "errored"].includes(status)) {
+    return "The runner did not complete cleanly; the detail separates test evidence from runtime failure.";
+  }
+  if (["cancelled", "canceled"].includes(status)) {
+    return "The runner job stopped before completion.";
+  }
+  if (status === "rejected") {
+    return "Nova-SRE rejected this runner action before it could run.";
+  }
+  return "This runner status needs operator review.";
+}
+
+function runnerNextStep(item: ApiRecord) {
+  if (isBackoffLimitExceeded(item)) {
+    return "Inspect pod events and logs for image pull, command, permission, or timeout problems before treating it as a repository test failure.";
+  }
+  if (isCommentFailure(item)) {
+    return "Check GitHub token permissions, PR metadata, and whether the repository allows the bot to comment.";
+  }
+  if (githubCommentAction(item).trim().toLowerCase() === "skipped") {
+    return "Confirm PR metadata and comment mode if you expected a diagnosis comment.";
+  }
+  const status = recordStatus(item);
+  if (["failed", "error", "errored"].includes(status)) {
+    return "Open runner logs or the diagnosis comment; real test failures should include repository-specific evidence.";
+  }
+  if (status === "rejected") {
+    return "Review webhook support, payload shape, and runner allowlist settings.";
+  }
+  return "Review the detail field and recent events for the matching delivery.";
+}
+
 function jobTitle(item: ApiRecord) {
   return `${statusLabel(recordStatus(item))} runner job`;
 }
@@ -960,6 +1136,7 @@ function isGitHubURL(value: string) {
 
 function statusLabel(status: string) {
   return status
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
     .split(/[-_\s]+/)
     .filter(Boolean)
     .map(titleCase)
@@ -1011,6 +1188,79 @@ function summaryDetail(list: ListState<ApiRecord>, singular: string, plural: str
     return `${list.items.length} recent ${list.items.length === 1 ? singular : plural} loaded`;
   }
   return `No recent ${plural}`;
+}
+
+function eventsStateHelp(status: LoadStatus) {
+  if (status === "empty") {
+    return "Send a GitHub ping or pull_request delivery after the tunnel and webhook secret are configured.";
+  }
+  if (status === "error") {
+    return "Confirm the API base, token, server process, and browser CORS configuration.";
+  }
+  if (status === "loading") {
+    return "Refreshing accepted and rejected delivery records.";
+  }
+  return "";
+}
+
+function jobsStateHelp(status: LoadStatus) {
+  if (status === "empty") {
+    return "Open or redeliver a supported PR event, then check Kubernetes if the webhook was accepted but no job appears.";
+  }
+  if (status === "error") {
+    return "Confirm the runner API is exposed and that the control panel can reach the Go server.";
+  }
+  if (status === "loading") {
+    return "Refreshing runner observations and diagnosis/comment outcomes.";
+  }
+  return "";
+}
+
+function webhookStatusHelp(value: string) {
+  const status = value.trim().toLowerCase();
+  if (status === "accepted" || status === "ok" || status === "success") {
+    return "Verified and queued; check runner status next.";
+  }
+  if (status === "duplicate") {
+    return "Already seen delivery; no new runner work expected.";
+  }
+  if (status === "rejected" || status === "unauthorized") {
+    return "Signature, secret, event type, or payload was rejected.";
+  }
+  if (toneForStatus(status) === "error") {
+    return "Delivery failed before normal runner handling.";
+  }
+  return "Review the delivery detail before redelivering.";
+}
+
+function runnerStatusHelp(value: string, item?: ApiRecord) {
+  const status = value.trim().toLowerCase();
+  const reason = item ? jobReason(item) : "";
+  if (reason.includes("backofflimitexceeded") || status === "backofflimitexceeded") {
+    return "Kubernetes hit its retry limit; inspect pod logs/events first.";
+  }
+  if (status === "succeeded" || status === "success" || status === "completed") {
+    return "Runner completed successfully.";
+  }
+  if (status === "running" || status === "pending" || status === "active") {
+    return "Runner is still in progress.";
+  }
+  if (status === "diagnosis_comment_error") {
+    return "Diagnosis ran, but GitHub comment posting failed.";
+  }
+  if (status === "diagnosis_error") {
+    return "Runner failed and the agent diagnosis path also errored.";
+  }
+  if (status === "diagnosed") {
+    return "Failure was analyzed by the agent.";
+  }
+  if (["failed", "error", "errored"].includes(status)) {
+    return "Check reason/detail to separate test failure from runner infrastructure.";
+  }
+  if (status === "cancelled" || status === "canceled") {
+    return "Stopped before completion.";
+  }
+  return "Needs operator review.";
 }
 
 function normalizeCountMap(value: unknown) {

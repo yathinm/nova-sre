@@ -27,6 +27,12 @@ const checks = [
   ["runner issue panel", "function RunnerIssuePanel"],
   ["runner issue selector", "function latestRunnerIssue"],
   ["runner attention copy", "Runner Attention"],
+  ["workflow guide", "function WorkflowGuide"],
+  ["operator guide panel", "function OperatorGuidePanel"],
+  ["webhook accepted explanation", "Verified and queued; check runner status next."],
+  ["runner status explanation", "function runnerStatusHelp"],
+  ["backoff guidance", "BackoffLimitExceeded"],
+  ["issue next step guidance", "function runnerNextStep"],
 ];
 
 const failures = checks

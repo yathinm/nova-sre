@@ -51,8 +51,9 @@ management, and a more complete operator control surface.
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline
   totals, status breakdowns, recent events, recent jobs, activity persistence
-  mode, the latest runner issue, GitHub PR comment links/actions, and job-level
-  failure details such as GitHub PR comment permission errors.
+  mode, the latest runner issue, GitHub PR comment links/actions, job-level
+  failure details, and operator guidance for accepted webhooks, runner failures,
+  Kubernetes retry exhaustion, diagnosis, and PR comment posting states.
 - Go server can persist bounded recent activity to an atomic JSON snapshot and
   reload it on startup; the local Kubernetes deployment mounts this path for
   server container restarts.
@@ -117,12 +118,12 @@ CI currently gates:
 
 - Promote the local file-backed activity store to production-grade persistence
   with persistent volumes or an external database.
-- Add a compact local troubleshooting page for common Minikube, port-forward,
-  webhook-signature, and browser CORS failures.
+- Expand the control-panel operator guide into deeper drill-downs for common
+  Minikube, port-forward, webhook-signature, and browser CORS failures.
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.
-- Add richer GitHub PR comment controls in the control panel instead of only
-  showing the server-level create/upsert mode.
+- Add richer GitHub PR comment controls in the control panel beyond explanatory
+  create/upsert mode and recent action visibility.
 - Customize and harden the production ingress/TLS overlay for the target domain,
   ingress controller, certificate issuer, image registry, and secret manager.
 - Connect external secret-manager workflows to the same `nova-sre-secrets` key

@@ -1,4 +1,5 @@
 import os
+import re
 
 from langgraph.graph import END, StateGraph
 
@@ -15,10 +16,26 @@ ERROR_MARKERS = (
     "traceback",
     "panic",
 )
+GO_TEST_FAILURE_PATTERNS = (
+    re.compile(r"(?:^|\]\s)--- FAIL:"),
+    re.compile(r"(?:^|\]\s)FAIL(?:\s|\t|$)"),
+    re.compile(r"(?:^|[\s\]/])[\w./-]+_test\.go:\d+:"),
+    re.compile(r"(?:^|\]\s)Error Trace:"),
+)
+GO_TEST_DETAIL_PATTERNS = (
+    re.compile(r"(?:^|\]\s)Error:\s"),
+)
+LOW_SIGNAL_LOG_PATTERNS = (
+    re.compile(r"(?:^|\]\s)go: downloading\s+"),
+)
 FAILURE_PATTERNS = (
     (
         "test_failure",
         (
+            "--- fail:",
+            "fail\t",
+            "_test.go:",
+            "error trace:",
             "assert",
             "pytest",
             "test failed",
@@ -116,10 +133,11 @@ def format_log_block(excerpt: str) -> str:
 def parse_logs(state: DiagnosisState) -> dict:
     lines = [line.strip() for line in state.logs.splitlines() if line.strip()]
     runner_context = _runner_context_lines(state)
-    relevant_lines = [
-        line for line in lines if any(marker in line.lower() for marker in ERROR_MARKERS)
-    ]
-    if relevant_lines:
+    concrete_failure_lines = _concrete_failure_lines(lines)
+    relevant_lines = [line for line in lines if _is_error_like_line(line)]
+    if concrete_failure_lines:
+        parsed_logs = _unique_lines(concrete_failure_lines + relevant_lines + runner_context)[:20]
+    elif relevant_lines:
         parsed_logs = (relevant_lines + runner_context)[:20]
     else:
         parsed_logs = (runner_context + lines[-20:])[:20]
@@ -226,6 +244,38 @@ def _runner_context_lines(state: DiagnosisState) -> list[str]:
     if state.message:
         context.append(f"Runner message: {state.message}")
     return [neutralize_markdown_fences(line.strip()) for line in context if line.strip()]
+
+
+def _concrete_failure_lines(lines: list[str]) -> list[str]:
+    go_test_lines = [line for line in lines if _matches_any(line, GO_TEST_FAILURE_PATTERNS)]
+    if not go_test_lines:
+        return []
+
+    go_test_details = [line for line in lines if _matches_any(line, GO_TEST_DETAIL_PATTERNS)]
+    return _unique_lines(go_test_lines + go_test_details)
+
+
+def _is_error_like_line(line: str) -> bool:
+    lowered = line.lower()
+    return (
+        any(marker in lowered for marker in ERROR_MARKERS)
+        and not _matches_any(line, LOW_SIGNAL_LOG_PATTERNS)
+    )
+
+
+def _matches_any(line: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    return any(pattern.search(line) for pattern in patterns)
+
+
+def _unique_lines(lines: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique_lines: list[str] = []
+    for line in lines:
+        if line in seen:
+            continue
+        seen.add(line)
+        unique_lines.append(line)
+    return unique_lines
 
 
 def _markdown_validation_errors(comment: str) -> list[str]:

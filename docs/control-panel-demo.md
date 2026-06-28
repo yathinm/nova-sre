@@ -71,9 +71,11 @@ make port-forward-frontend
 Open `http://localhost:8081`. Keep `make port-forward-server` running because the
 frontend deployment points the browser at `http://localhost:8080`.
 
-The panel polls health, metrics, recent webhook events, and recent runner jobs.
-Rows may disappear when the Go process restarts because the current activity
-lists are process-local memory.
+The panel polls health, metrics, runtime configuration, recent webhook events,
+recent runner jobs, diagnosis/comment outcomes, and a compact activity summary.
+The top guide explains the normal path: webhook accepted, runner executed, agent
+diagnosed, and PR comment posted. Rows may disappear when the Go process
+restarts unless the local activity store is enabled.
 
 If `NOVA_SRE_API_TOKEN` is configured on the Go server, enter the same value in
 the control panel's API token field before refreshing. The token is stored in
@@ -179,6 +181,21 @@ The control panel should show the delivery. With Kubernetes runner configuration
 `/api/jobs` reflects the queued runner activity and the cluster should also show a
 Job. Without cluster-backed runner configuration, the endpoint shows the in-memory
 job record captured when the webhook was accepted.
+
+Read the control panel states in order:
+
+- **Webhook accepted** means the delivery was authenticated, recorded, and queued
+  when supported. It does not mean repository tests passed.
+- **Runner job failed** means the Kubernetes runner did not complete cleanly. Use
+  the detail text, pod logs, and any diagnosis comment to decide whether this is a
+  real test failure or runner infrastructure trouble.
+- **BackoffLimitExceeded** means Kubernetes retried the runner pod until the Job
+  hit its retry limit. Start with pod events and logs for image, command,
+  permission, or timeout issues before treating it as a test assertion failure.
+- **Diagnosis/comment skipped or failed** means the agent path or GitHub comment
+  posting lacked required metadata, token permissions, or enabled comment
+  settings. Check `/api/config`, PR metadata, and GitHub token permissions.
+
 Failed, cancelled, rejected, and diagnosis-error runner jobs are also promoted into
 the Latest Issue panel so operators do not have to scan the full recent jobs table
 first.
