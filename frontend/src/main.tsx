@@ -438,12 +438,12 @@ async function loadMetrics(client: ReturnType<typeof createClient>, setCard: (ca
   try {
     const body = await client.text("/metrics");
     const families = parseMetricFamilies(body);
-    const novaFamilies = families.filter((name) => name.startsWith("nova_"));
+    const pipelineFamilies = families.filter((name) => name.startsWith("pipeline_"));
     setCard({
       label: "Metrics",
       value: families.length ? String(families.length) : "Ready",
-      detail: novaFamilies.length
-        ? `${novaFamilies.length} Nova metric families exposed`
+      detail: pipelineFamilies.length
+        ? `${pipelineFamilies.length} pipeline metric families exposed`
         : `${families.length} metric families exposed`,
       tone: "ok",
     });
