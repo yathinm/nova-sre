@@ -41,6 +41,7 @@ type Event struct {
 	DeliveryID string
 	Type       string
 	Body       []byte
+	ReceivedAt time.Time
 }
 
 type JobConfig struct {
@@ -561,6 +562,9 @@ func BuildGitHubEventJob(config JobConfig, event Event) (*batchv1.Job, error) {
 		"nova-sre.io/event":       event.Type,
 		"nova-sre.io/repository":  config.Repo,
 		"nova-sre.io/commit-sha":  config.SHA,
+	}
+	if !event.ReceivedAt.IsZero() {
+		annotations["nova-sre.io/received-at"] = event.ReceivedAt.UTC().Format(time.RFC3339Nano)
 	}
 
 	container := corev1.Container{

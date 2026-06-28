@@ -4,106 +4,13 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Nova-SRE Control Panel</title>
-    <link rel="stylesheet" href="./styles.css">
     <script>
       window.NOVA_SRE_API_BASE = window.NOVA_SRE_API_BASE || "";
     </script>
-    <script src="./config.js"></script>
+    <script type="module" src="/config.js"></script>
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Nova-SRE</p>
-          <h1>Control Panel</h1>
-        </div>
-        <div class="api-control">
-          <label for="api-base">API base</label>
-          <div class="api-row">
-            <input id="api-base" type="url" spellcheck="false" placeholder="http://localhost:8080">
-            <button id="refresh" type="button" title="Refresh data" aria-label="Refresh data">Go</button>
-          </div>
-        </div>
-      </header>
-
-      <section id="notice" class="notice" hidden></section>
-
-      <section class="summary-grid" aria-label="Service summary">
-        <article class="summary-card" id="card-health">
-          <span class="card-label">API Health</span>
-          <strong>Checking</strong>
-          <small>Waiting for /healthz</small>
-        </article>
-        <article class="summary-card" id="card-metrics">
-          <span class="card-label">Metrics</span>
-          <strong>Checking</strong>
-          <small>Waiting for /metrics</small>
-        </article>
-        <article class="summary-card" id="card-events">
-          <span class="card-label">Recent Events</span>
-          <strong>0</strong>
-          <small>No event list loaded</small>
-        </article>
-        <article class="summary-card" id="card-jobs">
-          <span class="card-label">Recent Jobs</span>
-          <strong>0</strong>
-          <small>No job list loaded</small>
-        </article>
-      </section>
-
-      <section class="content-grid">
-        <section class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">GitHub Webhooks</p>
-              <h2>Recent Events</h2>
-            </div>
-            <span id="events-source" class="source-label">No endpoint</span>
-          </div>
-          <div id="events-state" class="state"></div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Delivery</th>
-                  <th>Event</th>
-                  <th>Repository</th>
-                  <th>Received</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="events-body"></tbody>
-            </table>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Kubernetes Runner</p>
-              <h2>Recent Jobs</h2>
-            </div>
-            <span id="jobs-source" class="source-label">No endpoint</span>
-          </div>
-          <div id="jobs-state" class="state"></div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Job</th>
-                  <th>Namespace</th>
-                  <th>Event</th>
-                  <th>Observed</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody id="jobs-body"></tbody>
-            </table>
-          </div>
-        </section>
-      </section>
-    </main>
-
-    <script src="./app.js" defer></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

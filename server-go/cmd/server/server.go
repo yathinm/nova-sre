@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +16,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/yathinm/nova-sre/server-go/internal/runner"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 const (
@@ -37,6 +42,7 @@ type Server struct {
 	deliveries    *deliveryCache
 	enqueueEvent  githubEventEnqueuer
 	activity      *activityStore
+	jobLister     kubernetesJobLister
 }
 
 func NewServer(webhookSecret string) *Server {
@@ -69,6 +75,10 @@ func NewServerWithEnqueuerAndActivity(webhookSecret string, enqueueEvent githubE
 
 	s.routes()
 	return s
+}
+
+func (s *Server) SetKubernetesJobLister(jobLister kubernetesJobLister) {
+	s.jobLister = jobLister
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -176,7 +186,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"events": s.activity.recent(limit),
+		"events": s.activityEvents(r.Context(), limit),
 	})
 }
 
@@ -193,7 +203,7 @@ func (s *Server) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"jobs": s.activity.recentJobs(limit),
+		"jobs": s.activityJobs(r.Context(), limit),
 	})
 }
 
@@ -244,9 +254,193 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 
 func setAPIHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256")
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+type kubernetesJobLister interface {
+	List(ctx context.Context, opts metav1.ListOptions) (*batchv1.JobList, error)
+}
+
+func (s *Server) activityEvents(ctx context.Context, limit int) []activityRecord {
+	events := s.activity.recent(limit)
+	if s.jobLister == nil {
+		return events
+	}
+
+	jobs, err := s.listRunnerJobs(ctx)
+	if err != nil {
+		log.Printf("failed to list Kubernetes runner jobs for activity events: %v", err)
+		return events
+	}
+
+	byDelivery := make(map[string]activityRecord, len(events)+len(jobs.Items))
+	for _, event := range events {
+		byDelivery[event.DeliveryID] = event
+	}
+	for _, job := range jobs.Items {
+		record, ok := activityRecordFromJob(&job)
+		if !ok {
+			continue
+		}
+		if existing, exists := byDelivery[record.DeliveryID]; !exists || record.UpdatedAt.After(existing.UpdatedAt) {
+			byDelivery[record.DeliveryID] = mergeActivityRecord(existing, record)
+		}
+	}
+
+	merged := make([]activityRecord, 0, len(byDelivery))
+	for _, event := range byDelivery {
+		merged = append(merged, event)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
+	})
+	return limitActivity(merged, limit)
+}
+
+func (s *Server) activityJobs(ctx context.Context, limit int) []activityRecord {
+	records := s.activity.recentJobs(limit)
+	if s.jobLister == nil {
+		return records
+	}
+
+	jobs, err := s.listRunnerJobs(ctx)
+	if err != nil {
+		log.Printf("failed to list Kubernetes runner jobs for activity jobs: %v", err)
+		return records
+	}
+
+	byDelivery := make(map[string]activityRecord, len(records)+len(jobs.Items))
+	for _, record := range records {
+		byDelivery[record.DeliveryID] = record
+	}
+	for _, job := range jobs.Items {
+		record, ok := activityRecordFromJob(&job)
+		if !ok {
+			continue
+		}
+		if existing, exists := byDelivery[record.DeliveryID]; !exists || record.UpdatedAt.After(existing.UpdatedAt) {
+			byDelivery[record.DeliveryID] = mergeActivityRecord(existing, record)
+		}
+	}
+
+	merged := make([]activityRecord, 0, len(byDelivery))
+	for _, record := range byDelivery {
+		if strings.TrimSpace(record.JobName) != "" {
+			merged = append(merged, record)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
+	})
+	return limitActivity(merged, limit)
+}
+
+func (s *Server) listRunnerJobs(ctx context.Context) (*batchv1.JobList, error) {
+	selector := labels.Set{"app.kubernetes.io/name": "nova-sre-runner"}.String()
+	return s.jobLister.List(ctx, metav1.ListOptions{LabelSelector: selector})
+}
+
+func activityRecordFromJob(job *batchv1.Job) (activityRecord, bool) {
+	if job == nil || strings.TrimSpace(job.Annotations["nova-sre.io/delivery-id"]) == "" {
+		return activityRecord{}, false
+	}
+
+	status, reason, message := jobStatus(job)
+	receivedAt := parseAnnotationTime(job.Annotations["nova-sre.io/received-at"])
+	if receivedAt.IsZero() {
+		receivedAt = job.CreationTimestamp.Time
+	}
+	updatedAt := jobObservedTime(job)
+	if updatedAt.IsZero() {
+		updatedAt = receivedAt
+	}
+	return activityRecord{
+		DeliveryID: job.Annotations["nova-sre.io/delivery-id"],
+		Event:      job.Annotations["nova-sre.io/event"],
+		Repository: job.Annotations["nova-sre.io/repository"],
+		SHA:        job.Annotations["nova-sre.io/commit-sha"],
+		Status:     status,
+		Namespace:  job.Namespace,
+		JobName:    job.Name,
+		Reason:     reason,
+		Message:    message,
+		ReceivedAt: receivedAt.UTC(),
+		UpdatedAt:  updatedAt.UTC(),
+	}, true
+}
+
+func mergeActivityRecord(memory activityRecord, durable activityRecord) activityRecord {
+	if strings.TrimSpace(memory.DeliveryID) == "" {
+		return durable
+	}
+	memory.Event = firstNonEmpty(durable.Event, memory.Event)
+	memory.Repository = firstNonEmpty(durable.Repository, memory.Repository)
+	memory.SHA = firstNonEmpty(durable.SHA, memory.SHA)
+	memory.Status = firstNonEmpty(durable.Status, memory.Status)
+	memory.Namespace = firstNonEmpty(durable.Namespace, memory.Namespace)
+	memory.JobName = firstNonEmpty(durable.JobName, memory.JobName)
+	memory.Reason = firstNonEmpty(durable.Reason, memory.Reason)
+	memory.Message = firstNonEmpty(durable.Message, memory.Message)
+	if memory.ReceivedAt.IsZero() || (!durable.ReceivedAt.IsZero() && durable.ReceivedAt.Before(memory.ReceivedAt)) {
+		memory.ReceivedAt = durable.ReceivedAt
+	}
+	if durable.UpdatedAt.After(memory.UpdatedAt) {
+		memory.UpdatedAt = durable.UpdatedAt
+	}
+	return memory
+}
+
+func jobStatus(job *batchv1.Job) (string, string, string) {
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+			return "succeeded", condition.Reason, condition.Message
+		}
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			return "failed", condition.Reason, condition.Message
+		}
+	}
+	if job.Status.Active > 0 {
+		return "running", "", ""
+	}
+	if job.Status.Succeeded > 0 {
+		return "succeeded", "", ""
+	}
+	if job.Status.Failed > 0 {
+		return "failed", "", ""
+	}
+	return "queued", "", ""
+}
+
+func jobObservedTime(job *batchv1.Job) time.Time {
+	for _, value := range []*metav1.Time{job.Status.CompletionTime, job.Status.StartTime} {
+		if value != nil && !value.IsZero() {
+			return value.Time
+		}
+	}
+	if !job.CreationTimestamp.IsZero() {
+		return job.CreationTimestamp.Time
+	}
+	return time.Time{}
+}
+
+func parseAnnotationTime(value string) time.Time {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func limitActivity[T any](items []T, limit int) []T {
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
 }
 
 type deliveryCache struct {
