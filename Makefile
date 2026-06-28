@@ -99,7 +99,11 @@ validate-api-cors: ## Verify browser-readable Go API endpoints include CORS head
 	done
 
 validate-k8s: ## Validate Kubernetes app manifests client-side
-	kubectl apply --dry-run=client --validate=$(KUBECTL_VALIDATE) -f k8s/base -f k8s/rbac
+ifeq ($(KUBECTL_VALIDATE),false)
+	ruby scripts/validate-k8s-yaml.rb
+else
+	kubectl apply --dry-run=client --validate=true -f k8s/base -f k8s/rbac
+endif
 
 # ── Local control panel demo ──────────────────────────────────────────────────
 
