@@ -54,7 +54,7 @@ config_uri = uri_for(api_base, "/api/config")
 config = request(config_uri, Net::HTTP::Get.new(config_uri))
 expect_status(config, 200, "GET #{config_uri}")
 config_payload = JSON.parse(config.body)
-unless config_payload.key?("activity_limit") && config_payload.key?("delivery_cache_ttl")
+unless config_payload.key?("activity_limit") && config_payload.key?("delivery_cache_ttl") && config_payload.key?("agent_auth_enabled")
   abort("GET #{config_uri} did not include expected runtime config keys")
 end
 sensitive_keys = config_payload.keys.grep(/secret|token|password|key/i)

@@ -34,6 +34,8 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline
   totals, status breakdowns, recent events, and recent jobs.
+- Runtime config reports whether server-to-agent auth is enabled without exposing
+  the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
   headers.
 - Control-panel API tokens are kept in browser session storage, and legacy local

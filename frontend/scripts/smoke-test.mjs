@@ -17,6 +17,7 @@ const checks = [
   ["pipeline metrics filter", 'name.startsWith("pipeline_")'],
   ["delivery plural copy", 'summaryDetail(events, "delivery", "deliveries")'],
   ["runtime cors status", "api_cors_restricted"],
+  ["runtime agent auth status", "agent_auth_enabled"],
 ];
 
 const failures = checks

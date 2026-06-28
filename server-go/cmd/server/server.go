@@ -53,6 +53,7 @@ type runtimeConfig struct {
 	ActivityLimit       int    `json:"activity_limit"`
 	DeliveryCacheTTL    string `json:"delivery_cache_ttl"`
 	APIAuthEnabled      bool   `json:"api_auth_enabled"`
+	AgentAuthEnabled    bool   `json:"agent_auth_enabled"`
 	APICORSRestricted   bool   `json:"api_cors_restricted"`
 	RunnerNamespace     string `json:"runner_namespace,omitempty"`
 	RunnerImage         string `json:"runner_image,omitempty"`
