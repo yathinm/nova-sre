@@ -19,13 +19,14 @@ contains:
   account, RBAC, and ClusterIP services.
 - Terraform provider wiring for the `nova-sre` Minikube context.
 - Terraform-managed Helm releases for Prometheus and Grafana.
-- A Go server with `GET /healthz`, `GET /metrics`, `GET /api/events`,
-  `GET /api/jobs`, and `POST /webhook`.
+- A Go server with `GET /healthz`, `GET /metrics`, `GET /api/config`,
+  `GET /api/summary`, `GET /api/events`, `GET /api/jobs`, and `POST /webhook`.
 - Prometheus counters, gauges, and histograms for pipeline jobs.
 
-The next local milestone is validating the deployed server, runner jobs, agent
-traffic, Prometheus scrape target, and Grafana dashboard together with real
-GitHub webhook traffic.
+The deployed server, runner jobs, agent traffic, Prometheus scrape target, and
+Grafana dashboard now have validation commands. See
+[project-status.md](project-status.md) for the current completion snapshot and
+remaining MVP work.
 
 ## Install Prometheus and Grafana
 
