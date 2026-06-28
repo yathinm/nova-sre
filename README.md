@@ -1,326 +1,369 @@
 # Nova-SRE
 
-Nova-SRE is a Kubernetes-native CI/CD orchestration engine with AI-powered SRE diagnostics.
+Nova-SRE is a Kubernetes-native SRE automation platform that monitors GitHub webhooks, runs CI checks as Kubernetes Jobs, diagnoses failures with an AI-powered agent, and posts actionable PR comments — all observable through a real-time control panel.
 
-The only supported local runtime is **Minikube**. Local development, Terraform provider
-configuration, Docker image builds, and Kubernetes deployment steps all target the
-`nova-sre` Minikube profile. No other local Kubernetes runtime is supported.
-
-The project is currently in the local Minikube integration phase. The Go server,
-Python agent, Kubernetes manifests, Terraform provider wiring, and Terraform-managed
-Prometheus/Grafana releases are present. The local work now is validating the full
-webhook-to-job-to-agent path and making observability useful as real pipeline data
-flows through it.
-
-## Core Flow
-
-```text
-GitHub webhook -> Go orchestrator -> Kubernetes Job -> logs and metrics -> LangGraph agent -> GitHub PR comment
+```
+GitHub Webhook → Go Orchestrator → Kubernetes Job → LangGraph Agent → GitHub PR Comment
 ```
 
-## Main Components
+## Architecture
 
-- **Minikube** local Kubernetes runtime
-- **Terraform** Kubernetes and Helm provider wiring for the Minikube context
-- **Go** webhook runner
-- **Kubernetes Job** executor
-- **React** frontend control panel
-- **Prometheus and Grafana** telemetry
-- **Python LangGraph** diagnostic agent
-- **Kubernetes Secrets / External Secrets**
+Nova-SRE has four main components that work together in a pipeline:
 
-The checked-in React app is the frontend control panel for local webhook and
-runner activity. Grafana remains the stats frontend for Prometheus dashboards;
-run `make port-forward-grafana` after Terraform installs the Helm release and
-open `http://localhost:3000`. See
-[docs/control-panel-demo.md](docs/control-panel-demo.md) for the end-to-end local
-demo workflow, and [docs/project-status.md](docs/project-status.md) for the
-current completion snapshot and remaining MVP work. Production-oriented ingress,
-TLS, and persistence notes live in
-[docs/production-deployment.md](docs/production-deployment.md), and release
-promotion steps live in [docs/release-checklist.md](docs/release-checklist.md).
+| Component | Stack | Purpose |
+|-----------|-------|---------|
+| **Server** | Go 1.25, Prometheus client, Kubernetes client-go | Receives webhooks, validates signatures, creates K8s Jobs, watches failures, calls the agent |
+| **Agent** | Python 3.11+, FastAPI, LangGraph, optional OpenAI | Parses logs, classifies failures, generates diagnoses, posts PR comments |
+| **Frontend** | React 19, TypeScript 6, Vite 8 | Real-time control panel for monitoring the full webhook → comment pipeline |
+| **Infrastructure** | Minikube, Terraform, Prometheus, Grafana | Local Kubernetes cluster with observability stack |
 
-## Local Prerequisites
+### How It Works
 
-- Docker
-- Minikube
-- kubectl
-- Terraform >= 1.6
-- Go 1.25, for server tests and local development
-- Python 3.11 with the agent tooling installed, for agent tests and local development
-- Node.js and npm, for the React control panel
-- A public tunnel tool, such as ngrok or cloudflared, when testing GitHub webhooks
+1. **Webhook received** — GitHub sends a `push`, `pull_request`, or `workflow_run` event to the Go server at `/webhook`. The server validates the HMAC signature, deduplicates by delivery ID, and records the event.
 
-## Local Setup: GitHub Webhook to Minikube
+2. **Runner Job created** — The server creates a Kubernetes Batch Job with the repository context (repo, SHA, PR metadata) injected as environment variables. The job image and command are configurable per event type and per repository.
 
-The Makefile is the source of truth for local commands. It uses the Minikube profile
-`nova-sre`, which also becomes the Kubernetes context consumed by Terraform.
+3. **Failure detected** — The server watches the Job until completion. On failure, it collects pod logs (up to 64 KiB per container) and calls the Python agent at `/diagnose`.
 
-Before starting, check local dependencies:
+4. **AI diagnosis** — The LangGraph pipeline parses and filters logs, classifies the failure type (test, lint, dependency, timeout, auth, deploy, runner, or runtime), summarizes the root cause, proposes a fix, and generates a markdown PR comment. An optional LLM path (OpenAI) enhances the diagnosis when enabled.
+
+5. **PR comment posted** — The agent upserts (or creates) a diagnosis comment on the pull request via the GitHub API, including a fenced log excerpt and actionable next steps.
+
+6. **Control panel** — The React dashboard at `localhost:8081` shows the full pipeline state: webhook acceptance, runner execution, agent diagnosis, and comment delivery — with live auto-refresh, status breakdowns, and operator guidance.
+
+## Project Structure
+
+```
+nova-sre/
+├── server-go/              # Go webhook server and Kubernetes runner
+│   ├── cmd/server/          # Entry point, HTTP routes, activity store
+│   └── internal/runner/     # Job creation, agent client, metrics
+├── agent-python/            # Python diagnosis agent
+│   ├── app/
+│   │   ├── main.py          # FastAPI app with /diagnose endpoint
+│   │   ├── graph/           # LangGraph diagnosis pipeline
+│   │   ├── models/          # Pydantic schemas and log normalization
+│   │   └── clients/         # GitHub PR comment client
+│   └── tests/
+├── frontend/                # React control panel
+│   ├── src/main.tsx         # Full dashboard application
+│   └── src/styles.css       # Dashboard styles
+├── k8s/
+│   ├── base/                # Local Minikube manifests
+│   ├── rbac/                # ServiceAccount and Role for server
+│   ├── overlays/production/ # Production overlay (ingress, TLS, PVC)
+│   └── examples/            # Example secret manifest
+├── terraform/               # Prometheus and Grafana via Helm
+├── dashboards/              # Grafana pipeline dashboard JSON
+├── scripts/                 # Ruby helpers for local dev and validation
+└── docs/                    # Operational documentation
+```
+
+## Prerequisites
+
+- [Docker](https://www.docker.com/)
+- [Minikube](https://minikube.sigs.k8s.io/)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [Terraform](https://www.terraform.io/) >= 1.6
+- [Go](https://go.dev/) 1.25
+- [Python](https://www.python.org/) >= 3.11
+- [Node.js](https://nodejs.org/) >= 20 and npm
+- A tunnel tool ([ngrok](https://ngrok.com/) or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)) for GitHub webhook testing
+
+## Quick Start
+
+Check that all tools are available:
 
 ```sh
 make local-doctor
 ```
 
-1. Start the local cluster:
+### Full Setup (from scratch)
 
-   ```sh
-   make cluster-create
-   ```
+```sh
+make cluster-create          # Start Minikube with profile "nova-sre"
+make addons                  # Enable dashboard and metrics-server
+make tf-init && make tf-apply  # Install Prometheus and Grafana
+make local-up                # Build images, deploy apps, start port-forwards, validate
+```
 
-2. Confirm kubectl is pointed at Minikube:
+Open the control panel at **http://localhost:8081**.
 
-   ```sh
-   make cluster-info
-   ```
+### One-Command Rebuild
 
-3. Enable the standard local addons:
+After the cluster exists, rebuild and redeploy everything:
 
-   ```sh
-   make addons
-   ```
+```sh
+make local-up
+```
 
-   Enable ingress separately only when you are testing manifests that require it:
+Skip build/deploy when only restarting port-forwards:
 
-   ```sh
-   make addons-ingress
-   ```
+```sh
+NOVA_SRE_LOCAL_SKIP_BUILD=true NOVA_SRE_LOCAL_SKIP_DEPLOY=true make local-up
+```
 
-4. Initialize and apply Terraform against the Minikube context:
+Stop managed port-forwards:
 
-   ```sh
-   make tf-init
-   make tf-plan
-   make tf-apply
-   ```
+```sh
+make local-down
+```
 
-   The Terraform provider configuration targets the `nova-sre` kube context. The
-   current Terraform tree installs the local observability namespace plus Prometheus
-   and Grafana Helm releases. If those resources already exist in Minikube but this
-   checkout does not have Terraform state, run `make tf-import-observability` before
-   `make tf-plan`.
+## Local Services
 
-5. Build application images inside Minikube's Docker daemon:
+| Service | URL | Make target |
+|---------|-----|-------------|
+| Go API | http://localhost:8080 | `make port-forward-server` |
+| Control Panel | http://localhost:8081 | `make port-forward-frontend` |
+| Python Agent | http://localhost:8000 | `make port-forward-agent` |
+| Prometheus | http://localhost:9090 | `make port-forward-prometheus` |
+| Grafana | http://localhost:3000 | `make port-forward-grafana` |
 
-   ```sh
-   make docker-build
-   ```
+## API Endpoints
 
-   This tags the server, agent, and frontend images as `nova-sre-server:local`,
-   `nova-sre-agent:local`, and `nova-sre-frontend:local` inside the Minikube
-   profile, where Kubernetes can pull them without a registry push.
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/webhook` | GitHub webhook receiver (signature-validated) |
+| `GET` | `/healthz` | Health check |
+| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/api/config` | Runtime configuration |
+| `GET` | `/api/summary` | Activity summary (counts by status/event) |
+| `GET` | `/api/events` | Recent webhook deliveries |
+| `GET` | `/api/jobs` | Recent runner job observations |
 
-6. Deploy the Kubernetes app surface:
+## Configuration
 
-   ```sh
-   make deploy-apps
-   ```
+### Kubernetes Secrets
 
-   This applies `k8s/rbac/` and `k8s/base/`, including the `nova-sre` namespace,
-   the Go server, the Python agent, the frontend control panel, and the service
-   account/RBAC needed for the Go server to create Jobs and read pod logs. The
-   target restarts the app deployments after apply so pods pick up freshly built
-   local `:local` images. Local runner Jobs are retained for 15 minutes after
-   completion so you have time to inspect logs without letting completed Jobs
-   accumulate indefinitely. The app Deployments set conservative resource requests
-   and limits for Minikube, and generated runner Jobs default to `100m` CPU /
-   `128Mi` memory requests with `500m` CPU / `256Mi` memory limits. The server
-   keeps the latest 200 activity records in memory and deduplicates GitHub
-   deliveries for 15 minutes by default. Runner pod logs sent to the agent are
-   capped at 64 KiB per container by default before the agent applies its
-   normalized log cap.
+Create a secret named `nova-sre-secrets` in the `nova-sre` namespace:
 
-   For the normal local app loop, one command can build, deploy, start managed
-   port-forwards for `8080` and `8081`, and validate the browser-ready stack:
+| Key | Required | Description |
+|-----|----------|-------------|
+| `GITHUB_WEBHOOK_SECRET` | Yes | HMAC secret for webhook signature validation |
+| `GITHUB_TOKEN` | Yes | GitHub API token for PR comments |
+| `NOVA_SRE_API_TOKEN` | No | Bearer token for control panel API auth |
+| `NOVA_SRE_ALLOWED_ORIGINS` | No | Comma-separated CORS allowed origins |
+| `NOVA_SRE_AGENT_TOKEN` | No | Token for server → agent authentication |
+| `OPENAI_API_KEY` | No | Required only when LLM diagnosis is enabled |
 
-   ```sh
-   make local-up
-   ```
+See `k8s/examples/nova-sre-secret.example.yaml` for a template, or sync from environment variables:
 
-   Open `http://localhost:8081` after it passes. Port-forward logs and PIDs are
-   written under `.local/`. Stop those managed forwards with:
+```sh
+make sync-k8s-secret
+```
 
-   ```sh
-   make local-down
-   ```
+### Server Environment Variables
 
-   For faster rebuilds after images or manifests are already current, use:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NOVA_SRE_AGENT_URL` | — | Agent endpoint (e.g. `http://nova-sre-agent:8000`) |
+| `NOVA_SRE_AGENT_TIMEOUT` | `10s` | Agent HTTP client timeout |
+| `NOVA_SRE_ACTIVITY_LIMIT` | `200` | Max activity records kept |
+| `NOVA_SRE_ACTIVITY_STORE_PATH` | — | Path for persistent activity JSON |
+| `NOVA_SRE_DELIVERY_CACHE_TTL` | `15m` | Webhook deduplication window |
+| `NOVA_SRE_GITHUB_COMMENT_MODE` | `upsert` | `upsert` keeps one comment current; `create` posts a new one each time |
+| `NOVA_SRE_RUNNER_LOG_LIMIT_BYTES` | `65536` | Max log bytes collected per pod |
 
-   ```sh
-   NOVA_SRE_LOCAL_SKIP_BUILD=true NOVA_SRE_LOCAL_SKIP_DEPLOY=true make local-up
-   ```
+### Runner Job Configuration
 
-7. Expose the Go server locally after its Kubernetes Service exists:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUNNER_JOB_IMAGE` | — | Container image for runner jobs |
+| `RUNNER_JOB_COMMAND` | — | Default command for all events |
+| `RUNNER_JOB_COMMAND_PUSH` | — | Override command for push events |
+| `RUNNER_JOB_COMMAND_PULL_REQUEST` | — | Override command for PR events |
+| `RUNNER_JOB_COMMAND_WORKFLOW_RUN` | — | Override command for workflow_run events |
+| `RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES` | — | Per-repo commands (`owner/repo=command`, newline-separated) |
+| `RUNNER_JOB_TTL_SECONDS` | `900` | Finished job cleanup TTL |
+| `RUNNER_JOB_NAMESPACE` | `nova-sre` | Namespace for runner jobs |
+| `RUNNER_JOB_MEMORY_REQUEST` | `128Mi` | Memory request |
+| `RUNNER_JOB_MEMORY_LIMIT` | `256Mi` | Memory limit |
+| `RUNNER_JOB_CPU_REQUEST` | `100m` | CPU request |
+| `RUNNER_JOB_CPU_LIMIT` | `500m` | CPU limit |
 
-   ```sh
-   make port-forward-server
-   ```
+### Agent Environment Variables
 
-   The expected local endpoint is `http://localhost:8080`. The current server exposes
-   `GET /healthz`, `GET /metrics`, `GET /api/config`, `GET /api/events`,
-   `GET /api/jobs`, and `POST /webhook`.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NOVA_SRE_AGENT_TOKEN` | — | Required bearer token for `/diagnose` |
+| `GITHUB_TOKEN` | — | GitHub API token for posting PR comments |
+| `NOVA_SRE_ENABLE_LLM` | `false` | Enable LLM-enhanced diagnosis (`1`, `true`, or `yes`) |
+| `NOVA_SRE_LLM_MODEL` | `gpt-4o-mini` | OpenAI model for LLM diagnosis |
+| `NOVA_SRE_MAX_LOG_CHARS` | — | Max log characters for diagnosis input |
 
-   For a local process outside Kubernetes, run:
+## Testing a Webhook
 
-   ```sh
-   make run-server
-   ```
+1. Start the local stack:
 
-   When the server can load Kubernetes configuration, webhook deliveries create
-   cluster Jobs. Without Kubernetes configuration, the API still accepts requests
-   and records recent activity in memory for the control panel.
+```sh
+make local-up
+```
 
-8. Expose the frontend control panel locally after its Kubernetes Service exists:
+2. Create a public tunnel to the Go server:
 
-   ```sh
-   make port-forward-frontend
-   ```
+```sh
+ngrok http 8080
+```
 
-   Open `http://localhost:8081`. The frontend deployment sets
-   `NOVA_SRE_API_BASE=http://localhost:8080`, so keep `make port-forward-server`
-   running in another terminal while using the control panel.
+3. Configure a GitHub webhook pointing to `https://<tunnel-url>/webhook` with your webhook secret, sending `pull_request` events.
 
-9. Validate the Prometheus metrics endpoint:
+4. Open or update a PR. Watch the pipeline in the control panel at http://localhost:8081.
 
-   ```sh
-   make validate-metrics
-   ```
+5. Validate the tunnel before redelivering:
 
-   The target expects the server port-forward above to be running. It curls
-   `http://localhost:8080/metrics` and checks for default Go runtime metrics or
-   Nova-SRE pipeline metrics.
+```sh
+WEBHOOK_BASE_URL=https://<tunnel-url> \
+  GITHUB_WEBHOOK_SECRET="$GITHUB_WEBHOOK_SECRET" \
+  make validate-webhook-tunnel
+```
 
-10. Open the local observability services after Terraform has installed them.
-   Use separate terminals for these long-running port-forwards:
+## Testing
 
-   ```sh
-   make port-forward-prometheus
-   make port-forward-grafana
-   ```
+```sh
+make test-go       # Go unit tests
+make lint-go       # go vet
+make test-agent    # Python pytest
+make lint-agent    # ruff check
+make audit-deps    # govulncheck + npm audit
+```
 
-   Prometheus is available at `http://localhost:9090`. Grafana, the local stats
-   frontend, is available at `http://localhost:3000`. See
-   [docs/observability.md](docs/observability.md) for install, port-forward, and
-   scrape validation details.
+## CI
 
-11. For local frontend development outside Kubernetes, run the React control panel
-   in another terminal:
+GitHub Actions runs on PRs and pushes to `main`/`dev` with path-filtered jobs:
 
-   ```sh
-   make run-frontend
-   ```
+| Job | Trigger paths | Checks |
+|-----|---------------|--------|
+| Go tests | `server-go/**` | `go test`, `go vet`, `govulncheck` |
+| Python agent tests | `agent-python/**` | `pytest`, `ruff check` |
+| Frontend build | `frontend/**` | `npm audit`, smoke tests, `vite build` |
+| K8s manifests | `k8s/**` | Manifest validation, production overlay checks |
+| Terraform | `terraform/**`, `dashboards/**` | `terraform validate`, observability config checks |
+| Docker builds | Server/agent/frontend changes | Build all three images |
+| Script validation | `scripts/**` | Syntax checks, release tool tests |
+| Secret scan | All changes | Scan tracked files for committed secrets |
 
-   Open `http://localhost:5173`. The panel reads the API from
-   `http://localhost:8080` unless `frontend/public/config.js`, `localStorage`, or
-   the API base input points it somewhere else.
+## Observability
 
-12. Create a public tunnel to the local server port and configure the GitHub webhook:
+Terraform provisions Prometheus and Grafana into an `observability` namespace via Helm.
 
-   ```sh
-   ngrok http 8080
-   ```
+```sh
+make port-forward-prometheus   # http://localhost:9090
+make port-forward-grafana      # http://localhost:3000
+```
 
-   Or, with cloudflared:
+The Go server exposes `pipeline_*` Prometheus metrics (webhook counts, job durations, diagnosis outcomes). A pre-built Grafana dashboard is provisioned from `dashboards/pipeline-stats.json`.
 
-   ```sh
-   cloudflared tunnel --url http://localhost:8080
-   ```
+See [docs/observability.md](docs/observability.md) for details.
 
-   In GitHub, set the webhook payload URL to the tunnel URL plus `/webhook`. Use
-   the same webhook secret in GitHub and `GITHUB_WEBHOOK_SECRET`.
+## Documentation
 
-   Before redelivering from GitHub, validate the public route:
+| Document | Description |
+|----------|-------------|
+| [docs/control-panel-demo.md](docs/control-panel-demo.md) | End-to-end local demo walkthrough |
+| [docs/minikube-secrets.md](docs/minikube-secrets.md) | Secret setup for Minikube |
+| [docs/observability.md](docs/observability.md) | Prometheus and Grafana setup |
+| [docs/production-deployment.md](docs/production-deployment.md) | Production deployment guide (ingress, TLS, persistence) |
+| [docs/project-status.md](docs/project-status.md) | Current completion status and roadmap |
+| [docs/release-checklist.md](docs/release-checklist.md) | Release promotion steps |
 
-   ```sh
-   WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com make validate-webhook-tunnel
-   ```
+## Makefile Reference
 
-   Add `GITHUB_WEBHOOK_SECRET` to send a signed `ping` delivery through Nova-SRE:
+<details>
+<summary>All available targets</summary>
 
-   ```sh
-   WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com \
-     GITHUB_WEBHOOK_SECRET="$GITHUB_WEBHOOK_SECRET" \
-     make validate-webhook-tunnel
-   ```
+### Cluster Lifecycle
+| Target | Description |
+|--------|-------------|
+| `cluster-create` | Start Minikube with Docker driver |
+| `cluster-delete` | Delete the Minikube cluster |
+| `cluster-info` | Switch context and print cluster info |
+| `addons` | Enable dashboard and metrics-server |
+| `addons-ingress` | Enable ingress addon |
+| `dashboard` | Open the Minikube dashboard |
 
-13. Follow the event through the local pipeline:
+### Terraform
+| Target | Description |
+|--------|-------------|
+| `tf-init` | Initialize Terraform |
+| `tf-validate` | Check formatting and validate config |
+| `tf-plan` | Preview changes |
+| `tf-apply` | Apply changes |
+| `tf-destroy` | Destroy resources |
+| `tf-import-observability` | Import existing observability resources |
 
-   - GitHub sends the webhook to the public tunnel.
-   - The tunnel forwards to the port-forwarded Go server in Minikube.
-   - The Go orchestrator creates a Kubernetes Job in Minikube.
-   - The runner Job receives normalized GitHub context environment variables
-     for common push, pull request, and workflow run fields.
-   - Event-specific runner command overrides can select different behavior for
-     push, pull request, and workflow run events.
-   - The job emits logs and metrics for collection.
-   - The Go server keeps a bounded local activity snapshot for recent events and
-     jobs.
-   - The LangGraph agent diagnoses failures.
-   - The GitHub integration upserts the Nova-SRE diagnosis comment on the pull
-     request and reports sanitized comment failures back through recent job
-     details.
+### Build and Deploy
+| Target | Description |
+|--------|-------------|
+| `docker-env` | Print Docker-to-Minikube eval command |
+| `docker-build` | Build images inside Minikube's Docker |
+| `docker-build-ci` | Build images with active Docker (CI) |
+| `deploy-apps` | Apply RBAC and base manifests, restart deployments |
 
-## Makefile Workflow
+### Local Stack
+| Target | Description |
+|--------|-------------|
+| `local-doctor` | Check local tool dependencies |
+| `local-up` | Build, deploy, port-forward, validate |
+| `local-down` | Stop managed port-forwards |
+| `local-status` | Show port-forward status |
+| `run-server` | Run Go API locally (localhost:8080) |
+| `run-frontend` | Run React dev server (localhost:5173) |
 
-| Target | What it does |
-|--------|--------------|
-| `make cluster-create` | Starts Minikube with Docker driver and profile `nova-sre`. |
-| `make cluster-delete` | Deletes the `nova-sre` Minikube profile. |
-| `make cluster-info` | Switches kubectl to the `nova-sre` context and prints cluster details. |
-| `make addons` | Enables Minikube dashboard and metrics-server addons. |
-| `make addons-ingress` | Enables the Minikube ingress addon. |
-| `make dashboard` | Opens the Minikube dashboard. |
-| `make tf-init` | Runs `terraform init` in `terraform/`. |
-| `make tf-validate` | Checks Terraform formatting and validates configuration. |
-| `make tf-plan` | Runs `terraform plan` in `terraform/`. |
-| `make tf-apply` | Runs `terraform apply` in `terraform/`. |
-| `make tf-destroy` | Runs `terraform destroy` in `terraform/`. |
-| `make tf-import-observability` | Imports existing local observability resources into Terraform state. |
-| `make docker-env` | Prints the command that points Docker at Minikube's daemon. |
-| `make docker-build` | Builds server, agent, and frontend images into Minikube's Docker daemon. |
-| `make docker-build-ci` | Builds server, agent, and frontend images with the active Docker daemon for CI validation. |
-| `make deploy-apps` | Applies `k8s/rbac/` and `k8s/base/`, then restarts and waits for local app deployments. |
-| `make port-forward-server` | Forwards `svc/nova-sre-server` in namespace `nova-sre` to `localhost:8080`. |
-| `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |
-| `make port-forward-frontend` | Forwards `svc/nova-sre-frontend` in namespace `nova-sre` to `localhost:8081`. |
-| `make local-doctor` | Checks local tools needed for the Minikube app loop and webhook testing. |
-| `make local-up` | Builds, deploys, starts managed API/frontend port-forwards, and validates `localhost:8080`/`8081`. |
-| `make local-down` | Stops API/frontend port-forwards started by `make local-up`. |
-| `make local-status` | Shows managed local port-forward status. |
-| `make port-forward-prometheus` | Forwards `svc/prometheus-server` in namespace `observability` to `localhost:9090`. |
-| `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
-| `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
-| `make validate-api-cors` | Checks browser CORS headers on `/healthz`, `/metrics`, and `/api/config`. |
-| `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax and local app contract checks. |
-| `make validate-production-k8s` | Renders the production overlay and checks TLS ingress, API auth/CORS secret wiring, and activity PVC wiring. |
-| `make set-production-images` | Stamps production overlay images with `RELEASE_TAG` and optional `PRODUCTION_IMAGE_REGISTRY`. |
-| `make validate-release-tools` | Tests release helper scripts against a temporary production overlay copy. |
-| `make validate-scripts` | Checks repository Ruby helper scripts for syntax errors. |
-| `make validate-secrets` | Checks tracked files for real-looking committed secrets while allowing documented placeholders. |
-| `make validate-cluster-runtime` | Checks live Kubernetes deployments, services, agent health, and unauthenticated agent rejection. |
-| `make validate-observability-config` | Checks Prometheus scrape config, Grafana datasource provisioning, and dashboard metric queries. |
-| `make validate-local-runtime` | Checks the local API and frontend port-forwards for health, metrics, CORS, runtime config, summary, and control-panel HTML. |
-| `make validate-local-webhook` | Sends a signed local webhook `ping` to `localhost:8080` and confirms it appears in `/api/events`. |
-| `make validate-webhook-tunnel` | Checks a public webhook tunnel's `/healthz` and `/webhook`; sends a signed `ping` when `GITHUB_WEBHOOK_SECRET` is set. |
-| `make run-server` | Runs the Go API locally on `localhost:8080`. |
-| `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
-| `make audit-go` | Runs pinned `govulncheck` against the Go server. |
-| `make audit-frontend` | Runs `npm audit --audit-level=high` for frontend dependencies. |
-| `make audit-deps` | Runs the Go and frontend dependency vulnerability audits. |
-| `make test-go` | Runs Go tests under `server-go/`. |
-| `make lint-go` | Runs `go vet ./...` under `server-go/`. |
-| `make test-agent` | Runs `python -m pytest` under `agent-python/`. |
-| `make lint-agent` | Runs `ruff check .` under `agent-python/`. |
-| `make all-local` | Runs `cluster-create`, `addons`, `tf-init`, `tf-apply`, `docker-build`, and `deploy-apps`. |
+### Port Forwards
+| Target | Description |
+|--------|-------------|
+| `port-forward-server` | Go server → localhost:8080 |
+| `port-forward-agent` | Python agent → localhost:8000 |
+| `port-forward-frontend` | Control panel → localhost:8081 |
+| `port-forward-prometheus` | Prometheus → localhost:9090 |
+| `port-forward-grafana` | Grafana → localhost:3000 |
 
-`make all-local` does not enable ingress, open dashboards, start port-forwards,
-validate `/metrics`, run the React control panel, create a public webhook tunnel,
-or configure GitHub. Run those steps explicitly when needed.
+### Validation
+| Target | Description |
+|--------|-------------|
+| `validate-metrics` | Check Prometheus metrics endpoint |
+| `validate-api-cors` | Check CORS headers |
+| `validate-k8s` | Validate K8s manifests |
+| `validate-production-k8s` | Validate production overlay |
+| `validate-cluster-runtime` | Check live deployments and services |
+| `validate-local-runtime` | Check local API and frontend |
+| `validate-local-webhook` | Send signed local webhook ping |
+| `validate-webhook-tunnel` | Validate public tunnel |
+| `validate-secrets` | Scan for committed secrets |
+| `validate-scripts` | Check Ruby script syntax |
+| `validate-observability-config` | Check Prometheus/Grafana config |
+| `validate-secret-sync` | Test secret sync helper |
+| `validate-release-tools` | Test release helper scripts |
+| `validate-release-command` | Test release preflight flow |
+
+### Tests and Audits
+| Target | Description |
+|--------|-------------|
+| `test-go` | Go unit tests |
+| `lint-go` | Go vet |
+| `test-agent` | Python agent tests |
+| `lint-agent` | Ruff check |
+| `audit-go` | govulncheck |
+| `audit-frontend` | npm audit (high severity) |
+| `audit-deps` | All dependency audits |
+
+### Release
+| Target | Description |
+|--------|-------------|
+| `set-production-images` | Stamp production overlay images |
+| `prepare-production-release` | Full release preflight |
+| `sync-k8s-secret` | Apply secrets from env vars |
+
+### Full Setup
+| Target | Description |
+|--------|-------------|
+| `all-local` | Everything from cluster creation through deploy |
+
+</details>
 
 ## Branch Structure
 
 | Branch | Purpose |
 |--------|---------|
-| `main` | Stable working releases |
+| `main` | Stable releases |
 | `dev` | Active development |
-| `feature/*` | Feature branches (for example, `feature/go-webhook`, `feature/k8s-runner`, `feature/langgraph-agent`) |
