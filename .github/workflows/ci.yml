@@ -28,6 +28,7 @@ jobs:
       k8s: ${{ steps.filter.outputs.k8s }}
       terraform: ${{ steps.filter.outputs.terraform }}
       docker: ${{ steps.filter.outputs.docker }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -62,6 +63,10 @@ jobs:
               - 'server-go/**'
               - 'agent-python/**'
               - 'frontend/**'
+              - 'Makefile'
+            scripts:
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
               - 'Makefile'
 
   server-go:
@@ -187,3 +192,15 @@ jobs:
 
       - name: Build application images
         run: make docker-build-ci
+
+  scripts:
+    name: Script validation
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate helper scripts
+        run: make validate-scripts
