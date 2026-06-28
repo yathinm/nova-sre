@@ -49,6 +49,7 @@ func main() {
 	})
 	server.SetDeliveryCacheTTL(deliveryCacheTTL)
 	server.SetAPIToken(os.Getenv("NOVA_SRE_API_TOKEN"))
+	server.SetAPIAllowedOrigins(os.Getenv("NOVA_SRE_ALLOWED_ORIGINS"))
 	if creator, ok := jobRunner.Creator.(runner.KubernetesJobCreator); ok {
 		server.SetKubernetesJobLister(creator.Jobs)
 	}

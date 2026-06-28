@@ -312,6 +312,71 @@ func TestAPISummaryAndCORS(t *testing.T) {
 	}
 }
 
+func TestAPIAllowsConfiguredCORSOrigin(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIAllowedOrigins("https://panel.example.com, http://localhost:5173")
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.Header.Set("Origin", "https://panel.example.com")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://panel.example.com" {
+		t.Fatalf("expected configured CORS origin, got %q", got)
+	}
+	if got := rec.Header().Values("Vary"); !containsValue(got, "Origin") {
+		t.Fatalf("expected Vary Origin, got %#v", got)
+	}
+}
+
+func TestAPIDoesNotAllowUnconfiguredCORSOrigin(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIAllowedOrigins("https://panel.example.com")
+	req := httptest.NewRequest(http.MethodOptions, "/api/events", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected disallowed origin to be omitted, got %q", got)
+	}
+}
+
+func TestHealthzAndMetricsUseConfiguredCORSOrigin(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIAllowedOrigins("https://panel.example.com")
+
+	for _, path := range []string{"/healthz", "/metrics"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Origin", "https://panel.example.com")
+		rec := httptest.NewRecorder()
+
+		server.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected status %d, got %d", path, http.StatusOK, rec.Code)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://panel.example.com" {
+			t.Fatalf("%s: expected configured CORS origin, got %q", path, got)
+		}
+	}
+}
+
+func TestParseAllowedOriginsTrimsAndDeduplicates(t *testing.T) {
+	origins := parseAllowedOrigins(" https://a.example, ,https://b.example,https://a.example ")
+
+	if len(origins) != 2 || origins[0] != "https://a.example" || origins[1] != "https://b.example" {
+		t.Fatalf("unexpected origins: %#v", origins)
+	}
+}
+
 func TestAPISummaryIncludesKubernetesJobs(t *testing.T) {
 	receivedAt := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	completed := receivedAt.Add(3 * time.Minute)
@@ -534,6 +599,15 @@ func getJSON[T any](t *testing.T, server *Server, path string) T {
 		t.Fatalf("%s: decode response: %v", path, err)
 	}
 	return payload
+}
+
+func containsValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func signBody(body []byte, secret string) string {
