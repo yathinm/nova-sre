@@ -21,6 +21,7 @@ import (
 func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	ttl := int32(120)
 	backoff := int32(1)
+	receivedAt := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	job, err := BuildGitHubEventJob(JobConfig{
 		Namespace:          "runner-jobs",
 		Image:              "ghcr.io/example/nova-runner:test",
@@ -32,6 +33,7 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 		DeliveryID: "delivery-123",
 		Type:       "push",
 		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef1234567890"}`),
+		ReceivedAt: receivedAt,
 	})
 	if err != nil {
 		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
@@ -86,6 +88,9 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	}
 	if job.Annotations["nova-sre.io/repository"] != "acme/widgets" {
 		t.Fatalf("expected repository annotation, got %q", job.Annotations["nova-sre.io/repository"])
+	}
+	if job.Annotations["nova-sre.io/received-at"] != receivedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("expected received-at annotation, got %q", job.Annotations["nova-sre.io/received-at"])
 	}
 }
 

@@ -9,12 +9,17 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/yathinm/nova-sre/server-go/internal/runner"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 const (
@@ -37,6 +42,7 @@ type Server struct {
 	deliveries    *deliveryCache
 	enqueueEvent  githubEventEnqueuer
 	activity      *activityStore
+	jobLister     kubernetesJobLister
 }
 
 func NewServer(webhookSecret string) *Server {
@@ -58,6 +64,10 @@ func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueue
 
 	s.routes()
 	return s
+}
+
+func (s *Server) SetKubernetesJobLister(jobLister kubernetesJobLister) {
+	s.jobLister = jobLister
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +98,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, map[string]any{"events": s.activity.Events()})
+	events, err := s.activityEvents(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list activity events", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"events": events})
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +112,12 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, map[string]any{"jobs": s.activity.Jobs()})
+	jobs, err := s.activityJobs(r.Context())
+	if err != nil {
+		http.Error(w, "failed to list activity jobs", http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, map[string]any{"jobs": jobs})
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +173,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		DeliveryID: deliveryID,
 		Event:      event,
 		Body:       body,
+		ReceivedAt: receivedAt,
 	}); err != nil {
 		s.activity.UpdateEventStatus(deliveryID, "failed")
 		log.Printf("failed to enqueue GitHub event delivery=%s event=%s: %v", deliveryID, event, err)
@@ -193,6 +214,7 @@ type githubEvent struct {
 	DeliveryID string
 	Event      string
 	Body       json.RawMessage
+	ReceivedAt time.Time
 }
 
 type githubEventEnqueuer func(context.Context, githubEvent) error
@@ -213,6 +235,7 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 			DeliveryID: event.DeliveryID,
 			Type:       event.Event,
 			Body:       event.Body,
+			ReceivedAt: event.ReceivedAt,
 		})
 	}
 }
@@ -275,18 +298,191 @@ type activityEvent struct {
 	DeliveryID string    `json:"delivery_id"`
 	Event      string    `json:"event"`
 	Repository string    `json:"repository,omitempty"`
+	SHA        string    `json:"sha,omitempty"`
 	ReceivedAt time.Time `json:"received_at"`
 	Status     string    `json:"status"`
 }
 
 type activityJob struct {
-	JobName      string    `json:"job_name"`
-	Namespace    string    `json:"namespace"`
-	Event        string    `json:"event"`
-	Repository   string    `json:"repository,omitempty"`
-	DeliveryID   string    `json:"delivery_id"`
-	ObservedTime time.Time `json:"observed_time"`
-	Status       string    `json:"status"`
+	JobName      string     `json:"job_name"`
+	Namespace    string     `json:"namespace"`
+	Event        string     `json:"event"`
+	Repository   string     `json:"repository,omitempty"`
+	SHA          string     `json:"sha,omitempty"`
+	DeliveryID   string     `json:"delivery_id"`
+	ObservedTime time.Time  `json:"observed_time"`
+	Status       string     `json:"status"`
+	Reason       string     `json:"reason,omitempty"`
+	Message      string     `json:"message,omitempty"`
+	Active       int32      `json:"active"`
+	Succeeded    int32      `json:"succeeded"`
+	Failed       int32      `json:"failed"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+}
+
+type kubernetesJobLister interface {
+	List(ctx context.Context, opts metav1.ListOptions) (*batchv1.JobList, error)
+}
+
+func (s *Server) activityEvents(ctx context.Context) ([]activityEvent, error) {
+	events := s.activity.Events()
+	if s.jobLister == nil {
+		return events, nil
+	}
+
+	jobs, err := s.listRunnerJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	byDelivery := make(map[string]activityEvent, len(events)+len(jobs.Items))
+	for _, event := range events {
+		byDelivery[event.DeliveryID] = event
+	}
+	for _, job := range jobs.Items {
+		event, ok := activityEventFromJob(&job)
+		if !ok {
+			continue
+		}
+		if _, exists := byDelivery[event.DeliveryID]; !exists {
+			byDelivery[event.DeliveryID] = event
+		}
+	}
+
+	merged := make([]activityEvent, 0, len(byDelivery))
+	for _, event := range byDelivery {
+		merged = append(merged, event)
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].ReceivedAt.After(merged[j].ReceivedAt)
+	})
+	return limitActivity(merged, s.activity.limit), nil
+}
+
+func (s *Server) activityJobs(ctx context.Context) ([]activityJob, error) {
+	if s.jobLister == nil {
+		return s.activity.Jobs(), nil
+	}
+
+	jobs, err := s.listRunnerJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	activity := make([]activityJob, 0, len(jobs.Items))
+	for _, job := range jobs.Items {
+		activity = append(activity, activityJobFromJob(&job))
+	}
+	sort.SliceStable(activity, func(i, j int) bool {
+		return activity[i].ObservedTime.After(activity[j].ObservedTime)
+	})
+	return limitActivity(activity, s.activity.limit), nil
+}
+
+func (s *Server) listRunnerJobs(ctx context.Context) (*batchv1.JobList, error) {
+	selector := labels.Set{"app.kubernetes.io/name": "nova-sre-runner"}.String()
+	return s.jobLister.List(ctx, metav1.ListOptions{LabelSelector: selector})
+}
+
+func activityEventFromJob(job *batchv1.Job) (activityEvent, bool) {
+	if job == nil || strings.TrimSpace(job.Annotations["nova-sre.io/delivery-id"]) == "" {
+		return activityEvent{}, false
+	}
+
+	receivedAt := parseAnnotationTime(job.Annotations["nova-sre.io/received-at"])
+	if receivedAt.IsZero() {
+		receivedAt = job.CreationTimestamp.Time
+	}
+	return activityEvent{
+		DeliveryID: job.Annotations["nova-sre.io/delivery-id"],
+		Event:      job.Annotations["nova-sre.io/event"],
+		Repository: job.Annotations["nova-sre.io/repository"],
+		SHA:        job.Annotations["nova-sre.io/commit-sha"],
+		ReceivedAt: receivedAt.UTC(),
+		Status:     "accepted",
+	}, true
+}
+
+func activityJobFromJob(job *batchv1.Job) activityJob {
+	status, reason, message := jobStatus(job)
+	observedAt := jobObservedTime(job)
+	return activityJob{
+		JobName:      job.Name,
+		Namespace:    job.Namespace,
+		Event:        job.Annotations["nova-sre.io/event"],
+		Repository:   job.Annotations["nova-sre.io/repository"],
+		SHA:          job.Annotations["nova-sre.io/commit-sha"],
+		DeliveryID:   job.Annotations["nova-sre.io/delivery-id"],
+		ObservedTime: observedAt.UTC(),
+		Status:       status,
+		Reason:       reason,
+		Message:      message,
+		Active:       job.Status.Active,
+		Succeeded:    job.Status.Succeeded,
+		Failed:       job.Status.Failed,
+		StartedAt:    metav1TimePtr(job.Status.StartTime),
+		CompletedAt:  metav1TimePtr(job.Status.CompletionTime),
+	}
+}
+
+func jobStatus(job *batchv1.Job) (string, string, string) {
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+			return "succeeded", condition.Reason, condition.Message
+		}
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			return "failed", condition.Reason, condition.Message
+		}
+	}
+	if job.Status.Active > 0 {
+		return "running", "", ""
+	}
+	if job.Status.Succeeded > 0 {
+		return "succeeded", "", ""
+	}
+	if job.Status.Failed > 0 {
+		return "failed", "", ""
+	}
+	return "queued", "", ""
+}
+
+func jobObservedTime(job *batchv1.Job) time.Time {
+	for _, value := range []*metav1.Time{job.Status.CompletionTime, job.Status.StartTime} {
+		if value != nil && !value.IsZero() {
+			return value.Time
+		}
+	}
+	if !job.CreationTimestamp.IsZero() {
+		return job.CreationTimestamp.Time
+	}
+	return time.Time{}
+}
+
+func parseAnnotationTime(value string) time.Time {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
+func metav1TimePtr(value *metav1.Time) *time.Time {
+	if value == nil || value.IsZero() {
+		return nil
+	}
+	utc := value.Time.UTC()
+	return &utc
+}
+
+func limitActivity[T any](items []T, limit int) []T {
+	if limit > 0 && len(items) > limit {
+		return items[:limit]
+	}
+	return items
 }
 
 type activityStore struct {
