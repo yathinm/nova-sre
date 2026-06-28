@@ -108,6 +108,24 @@ In GitHub, open the repository settings, then **Webhooks**.
 GitHub signs each delivery with `X-Hub-Signature-256`. If the secret differs from
 the server environment, Nova-SRE returns `401`.
 
+## Webhook Delivery Troubleshooting
+
+In GitHub delivery history, `failed to connect to host` means GitHub could not
+reach the tunnel host at all. For quick tunnels, this usually means the tunnel
+process stopped or the webhook still points at an older tunnel URL. Start a fresh
+tunnel, update the Payload URL, and verify the public route before redelivering:
+
+```sh
+cloudflared tunnel --url http://localhost:8080
+curl -fsS https://example-tunnel.trycloudflare.com/healthz
+curl -i https://example-tunnel.trycloudflare.com/webhook
+```
+
+The `/webhook` GET check should return `405 Method Not Allowed` with
+`Allow: POST`; that proves the public URL reaches the Nova-SRE server. If GitHub
+then reports `401`, the tunnel is reachable but the webhook Secret does not match
+`GITHUB_WEBHOOK_SECRET` in the running server or Kubernetes secret.
+
 ## 5. Create a Harmless Test PR
 
 Create a short-lived branch in the same repository, make a tiny non-sensitive
