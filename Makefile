@@ -4,7 +4,7 @@ PYTHON ?= python3
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics run-server run-frontend all-local test-go lint-go test-agent lint-agent
+        validate-metrics validate-api-cors run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -90,6 +90,12 @@ port-forward-grafana: ## Forward Grafana → localhost:3000
 
 validate-metrics: ## Verify the port-forwarded Go server exposes Prometheus metrics
 	curl -fsS http://localhost:8080/metrics | grep -E 'go_gc_duration_seconds|pipeline_jobs_total'
+
+validate-api-cors: ## Verify browser-readable Go API endpoints include CORS headers
+	@for path in /healthz /metrics /api/config; do \
+		echo "Checking $$path"; \
+		curl -fsS -D - -o /dev/null -H 'Origin: http://localhost:8081' "http://localhost:8080$$path" | grep -i '^Access-Control-Allow-Origin:'; \
+	done
 
 # ── Local control panel demo ──────────────────────────────────────────────────
 
