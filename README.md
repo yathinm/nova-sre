@@ -122,8 +122,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    ```
 
    The expected local endpoint is `http://localhost:8080`. The current server exposes
-   `GET /healthz`, `GET /metrics`, `GET /api/events`, `GET /api/jobs`, and
-   `POST /webhook`.
+   `GET /healthz`, `GET /metrics`, `GET /api/config`, `GET /api/events`,
+   `GET /api/jobs`, and `POST /webhook`.
 
    For a local process outside Kubernetes, run:
 

@@ -28,6 +28,7 @@ The API listens on `http://localhost:8080` and exposes:
 
 - `GET /healthz`
 - `GET /metrics`
+- `GET /api/config`
 - `GET /api/events`
 - `GET /api/jobs`
 - `POST /webhook`
@@ -118,6 +119,7 @@ After GitHub sends the `pull_request` webhook:
 ```sh
 curl -fsS http://localhost:8080/api/events
 curl -fsS http://localhost:8080/api/jobs
+curl -fsS http://localhost:8080/api/config
 ```
 
 The control panel should show the delivery. With Kubernetes runner configuration,
