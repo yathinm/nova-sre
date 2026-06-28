@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,62 @@ func TestWebhookAcceptsSignedSupportedEvent(t *testing.T) {
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+}
+
+func TestWebhookRecordsRecentEventAndJob(t *testing.T) {
+	body := []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abc123"}`)
+	server := NewServerWithEnqueuer("", func(_ context.Context, _ githubEvent) error {
+		return nil
+	})
+	req := webhookRequest(body, "delivery-1", "push")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+
+	events := getJSON[struct {
+		Events []activityEvent `json:"events"`
+	}](t, server, "/api/events")
+	if len(events.Events) != 1 {
+		t.Fatalf("expected one event, got %#v", events.Events)
+	}
+	if events.Events[0].DeliveryID != "delivery-1" || events.Events[0].Event != "push" || events.Events[0].Repository != "acme/widgets" {
+		t.Fatalf("unexpected event: %#v", events.Events[0])
+	}
+	if events.Events[0].Status != "accepted" {
+		t.Fatalf("expected accepted event, got %q", events.Events[0].Status)
+	}
+
+	jobs := getJSON[struct {
+		Jobs []activityJob `json:"jobs"`
+	}](t, server, "/api/jobs")
+	if len(jobs.Jobs) != 1 {
+		t.Fatalf("expected one job, got %#v", jobs.Jobs)
+	}
+	if jobs.Jobs[0].Event != "push" || jobs.Jobs[0].Repository != "acme/widgets" || jobs.Jobs[0].DeliveryID != "delivery-1" {
+		t.Fatalf("unexpected job: %#v", jobs.Jobs[0])
+	}
+	if jobs.Jobs[0].Status != "queued" {
+		t.Fatalf("expected queued job, got %q", jobs.Jobs[0].Status)
+	}
+}
+
+func TestAPIResponsesIncludeCORSHeaders(t *testing.T) {
+	server := NewServer("")
+	req := httptest.NewRequest(http.MethodOptions, "/api/events", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected CORS origin *, got %q", got)
 	}
 }
 
@@ -125,6 +182,21 @@ func webhookRequest(body []byte, deliveryID string, event string) *http.Request 
 	req.Header.Set(githubDeliveryHeader, deliveryID)
 	req.Header.Set(githubEventHeader, event)
 	return req
+}
+
+func getJSON[T any](t *testing.T, server *Server, path string) T {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s: expected status %d, got %d: %s", path, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var payload T
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("%s: decode response: %v", path, err)
+	}
+	return payload
 }
 
 func signBody(body []byte, secret string) string {

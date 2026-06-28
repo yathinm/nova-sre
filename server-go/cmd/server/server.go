@@ -36,6 +36,7 @@ type Server struct {
 	webhookSecret string
 	deliveries    *deliveryCache
 	enqueueEvent  githubEventEnqueuer
+	activity      *activityStore
 }
 
 func NewServer(webhookSecret string) *Server {
@@ -52,6 +53,7 @@ func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueue
 		webhookSecret: webhookSecret,
 		deliveries:    newDeliveryCache(15 * time.Minute),
 		enqueueEvent:  enqueueEvent,
+		activity:      newActivityStore(50),
 	}
 
 	s.routes()
@@ -59,18 +61,43 @@ func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueue
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	setCORSHeaders(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	s.mux.ServeHTTP(w, r)
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/api/events", s.handleEvents)
+	s.mux.HandleFunc("/api/jobs", s.handleJobs)
 	s.mux.HandleFunc("/webhook", s.handleWebhook)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, map[string]any{"events": s.activity.Events()})
+}
+
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, map[string]any{"jobs": s.activity.Jobs()})
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -112,16 +139,36 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	receivedAt := time.Now().UTC()
+	repository := repositoryFromGitHubPayload(body)
+	s.activity.RecordEvent(activityEvent{
+		DeliveryID: deliveryID,
+		Event:      event,
+		Repository: repository,
+		ReceivedAt: receivedAt,
+		Status:     "accepted",
+	})
+
 	if err := s.enqueueEvent(r.Context(), githubEvent{
 		DeliveryID: deliveryID,
 		Event:      event,
 		Body:       body,
 	}); err != nil {
+		s.activity.UpdateEventStatus(deliveryID, "failed")
 		log.Printf("failed to enqueue GitHub event delivery=%s event=%s: %v", deliveryID, event, err)
 		http.Error(w, "failed to enqueue GitHub event", http.StatusInternalServerError)
 		return
 	}
 
+	s.activity.RecordJob(activityJob{
+		JobName:      "delivery-" + shortDeliveryID(deliveryID),
+		Namespace:    "nova-sre",
+		Event:        event,
+		Repository:   repository,
+		DeliveryID:   deliveryID,
+		ObservedTime: receivedAt,
+		Status:       "queued",
+	})
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -168,6 +215,132 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 			Body:       event.Body,
 		})
 	}
+}
+
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256")
+}
+
+func writeJSON(w http.ResponseWriter, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func repositoryFromGitHubPayload(body []byte) string {
+	var payload struct {
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+		PullRequest struct {
+			Head struct {
+				Repo struct {
+					FullName string `json:"full_name"`
+				} `json:"repo"`
+			} `json:"head"`
+		} `json:"pull_request"`
+		WorkflowRun struct {
+			Repository struct {
+				FullName string `json:"full_name"`
+			} `json:"repository"`
+		} `json:"workflow_run"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func shortDeliveryID(deliveryID string) string {
+	deliveryID = strings.TrimSpace(deliveryID)
+	if len(deliveryID) <= 8 {
+		return deliveryID
+	}
+	return deliveryID[:8]
+}
+
+type activityEvent struct {
+	DeliveryID string    `json:"delivery_id"`
+	Event      string    `json:"event"`
+	Repository string    `json:"repository,omitempty"`
+	ReceivedAt time.Time `json:"received_at"`
+	Status     string    `json:"status"`
+}
+
+type activityJob struct {
+	JobName      string    `json:"job_name"`
+	Namespace    string    `json:"namespace"`
+	Event        string    `json:"event"`
+	Repository   string    `json:"repository,omitempty"`
+	DeliveryID   string    `json:"delivery_id"`
+	ObservedTime time.Time `json:"observed_time"`
+	Status       string    `json:"status"`
+}
+
+type activityStore struct {
+	limit  int
+	mu     sync.Mutex
+	events []activityEvent
+	jobs   []activityJob
+}
+
+func newActivityStore(limit int) *activityStore {
+	return &activityStore{limit: limit}
+}
+
+func (s *activityStore) RecordEvent(event activityEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = prependLimited(event, s.events, s.limit)
+}
+
+func (s *activityStore) UpdateEventStatus(deliveryID string, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.events {
+		if s.events[i].DeliveryID == deliveryID {
+			s.events[i].Status = status
+			return
+		}
+	}
+}
+
+func (s *activityStore) RecordJob(job activityJob) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.jobs = prependLimited(job, s.jobs, s.limit)
+}
+
+func (s *activityStore) Events() []activityEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]activityEvent(nil), s.events...)
+}
+
+func (s *activityStore) Jobs() []activityJob {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]activityJob(nil), s.jobs...)
+}
+
+func prependLimited[T any](item T, items []T, limit int) []T {
+	next := append([]T{item}, items...)
+	if limit > 0 && len(next) > limit {
+		return next[:limit]
+	}
+	return next
 }
 
 type deliveryCache struct {
