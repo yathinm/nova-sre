@@ -3,7 +3,7 @@ PROFILE=nova-sre
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-apply tf-destroy docker-env docker-build deploy-apps \
         port-forward-server port-forward-agent port-forward-prometheus port-forward-grafana \
-        validate-metrics all-local test-go lint-go test-agent lint-agent
+        validate-metrics run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -72,6 +72,14 @@ port-forward-grafana: ## Forward Grafana → localhost:3000
 
 validate-metrics: ## Verify the port-forwarded Go server exposes Prometheus metrics
 	curl -fsS http://localhost:8080/metrics | grep -E 'go_gc_duration_seconds|pipeline_jobs_total'
+
+# ── Local control panel demo ──────────────────────────────────────────────────
+
+run-server: ## Run the Go API locally on localhost:8080
+	cd server-go && go run ./cmd/server
+
+run-frontend: ## Run the React control panel locally on localhost:5173
+	cd frontend && npm run dev
 
 # ── Go server ─────────────────────────────────────────────────────────────────
 

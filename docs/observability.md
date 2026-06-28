@@ -5,9 +5,10 @@ profile by Terraform. Prometheus and Grafana run in the `observability`
 namespace, while the Go server exposes Prometheus-format application metrics at
 `/metrics` on port `8080`.
 
-There is no separate checked-in stats frontend in this repository right now.
-The local stats frontend is Grafana, available at `http://localhost:3000` after
-port-forwarding the Grafana service.
+Grafana is the stats frontend for Prometheus dashboards, available at
+`http://localhost:3000` after port-forwarding the Grafana service. The separate
+React control panel in `frontend/` shows recent webhook and runner activity from
+the Go API; see [control-panel-demo.md](control-panel-demo.md).
 
 ## Current Phase
 
@@ -18,7 +19,8 @@ contains:
   account, RBAC, and ClusterIP services.
 - Terraform provider wiring for the `nova-sre` Minikube context.
 - Terraform-managed Helm releases for Prometheus and Grafana.
-- A Go server with `GET /healthz`, `GET /metrics`, and `POST /webhook`.
+- A Go server with `GET /healthz`, `GET /metrics`, `GET /api/events`,
+  `GET /api/jobs`, and `POST /webhook`.
 - Prometheus counters, gauges, and histograms for pipeline jobs.
 
 The next local milestone is validating the deployed server, runner jobs, agent

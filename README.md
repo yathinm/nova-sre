@@ -28,10 +28,10 @@ GitHub webhook -> Go orchestrator -> Kubernetes Job -> logs and metrics -> LangG
 - **Python LangGraph** diagnostic agent
 - **Kubernetes Secrets / External Secrets**
 
-The stats frontend is **Grafana**. There is no separate checked-in frontend app for
-stats today; run `make port-forward-grafana` after Terraform installs the Helm
-release and open `http://localhost:3000`. Terraform provisions the
-`dashboards/pipeline-stats.json` dashboard into Grafana.
+Grafana remains the stats frontend for Prometheus dashboards. The repository also
+includes a lightweight React control panel in `frontend/` for local webhook and
+runner activity. See [docs/control-panel-demo.md](docs/control-panel-demo.md) for
+the end-to-end local demo workflow.
 
 ## Local Prerequisites
 
@@ -41,6 +41,7 @@ release and open `http://localhost:3000`. Terraform provisions the
 - Terraform >= 1.6
 - Go, for server tests and local development
 - Python with the agent tooling installed, for agent tests and local development
+- Node.js and npm, for the React control panel
 - A public tunnel tool, such as ngrok or cloudflared, when testing GitHub webhooks
 
 ## Local Setup: GitHub Webhook to Minikube
@@ -110,7 +111,18 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    ```
 
    The expected local endpoint is `http://localhost:8080`. The current server exposes
-   `GET /healthz`, `GET /metrics`, and `POST /webhook`.
+   `GET /healthz`, `GET /metrics`, `GET /api/events`, `GET /api/jobs`, and
+   `POST /webhook`.
+
+   For a local process outside Kubernetes, run:
+
+   ```sh
+   make run-server
+   ```
+
+   When the server can load Kubernetes configuration, webhook deliveries create
+   cluster Jobs. Without Kubernetes configuration, the API still accepts requests
+   and records recent activity in memory for the control panel.
 
 8. Validate the Prometheus metrics endpoint:
 
@@ -135,17 +147,32 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    [docs/observability.md](docs/observability.md) for install, port-forward, and
    scrape validation details.
 
-10. Create a public tunnel to the local server port and configure the GitHub webhook:
+10. Run the React control panel in another terminal:
+
+   ```sh
+   make run-frontend
+   ```
+
+   Open `http://localhost:5173`. The panel reads the API from
+   `http://localhost:8080` unless `frontend/public/config.js`, `localStorage`, or
+   the API base input points it somewhere else.
+
+11. Create a public tunnel to the local server port and configure the GitHub webhook:
 
    ```sh
    ngrok http 8080
    ```
 
-   In GitHub, set the webhook payload URL to the tunnel URL plus the webhook path
-   implemented by the Go server. Use the shared webhook secret stored in Kubernetes
-   once the secret manifest or external-secret integration exists.
+   Or, with cloudflared:
 
-11. Follow the event through the local pipeline:
+   ```sh
+   cloudflared tunnel --url http://localhost:8080
+   ```
+
+   In GitHub, set the webhook payload URL to the tunnel URL plus `/webhook`. Use
+   the same webhook secret in GitHub and `GITHUB_WEBHOOK_SECRET`.
+
+12. Follow the event through the local pipeline:
 
    - GitHub sends the webhook to the public tunnel.
    - The tunnel forwards to the port-forwarded Go server in Minikube.
@@ -175,6 +202,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make port-forward-prometheus` | Forwards `svc/prometheus-server` in namespace `observability` to `localhost:9090`. |
 | `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
 | `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
+| `make run-server` | Runs the Go API locally on `localhost:8080`. |
+| `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
 | `make test-go` | Runs Go tests under `server-go/`. |
 | `make lint-go` | Runs `go vet ./...` under `server-go/`. |
 | `make test-agent` | Runs `python -m pytest` under `agent-python/`. |
@@ -182,8 +211,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make all-local` | Runs `cluster-create`, `addons`, `tf-init`, `tf-apply`, `docker-build`, and `deploy-apps`. |
 
 `make all-local` does not enable ingress, open dashboards, start port-forwards,
-validate `/metrics`, create a public webhook tunnel, or configure GitHub. Run those
-steps explicitly when needed.
+validate `/metrics`, run the React control panel, create a public webhook tunnel,
+or configure GitHub. Run those steps explicitly when needed.
 
 ## Branch Structure
 
