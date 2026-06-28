@@ -16,10 +16,22 @@ spec:
         app: nova-sre-server
     spec:
       serviceAccountName: nova-sre-server
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           image: nova-sre-server:local
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
