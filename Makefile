@@ -6,7 +6,7 @@ GOVULNCHECK_VERSION ?= v1.5.0
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics validate-api-cors validate-k8s validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-webhook-tunnel run-server run-frontend all-local \
+        validate-metrics validate-api-cors validate-k8s validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-local-webhook validate-webhook-tunnel run-server run-frontend all-local \
         test-go lint-go audit-go test-agent lint-agent audit-frontend audit-deps
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
@@ -121,6 +121,7 @@ validate-scripts: ## Validate repository Ruby helper scripts
 	ruby -c scripts/validate-k8s-yaml.rb
 	ruby -c scripts/validate-cluster-runtime.rb
 	ruby -c scripts/validate-local-runtime.rb
+	ruby -c scripts/validate-local-webhook.rb
 	ruby -c scripts/validate-observability-config.rb
 	ruby -c scripts/validate-secrets.rb
 	ruby -c scripts/validate-webhook-tunnel.rb
@@ -136,6 +137,9 @@ validate-observability-config: ## Validate Prometheus, Grafana, and dashboard wi
 
 validate-local-runtime: ## Validate local API and frontend port-forwards
 	ruby scripts/validate-local-runtime.rb
+
+validate-local-webhook: ## Send a signed local webhook ping and confirm activity
+	ruby scripts/validate-local-webhook.rb
 
 validate-webhook-tunnel: ## Validate a public webhook tunnel; set WEBHOOK_BASE_URL and optionally GITHUB_WEBHOOK_SECRET
 	ruby scripts/validate-webhook-tunnel.rb

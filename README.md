@@ -254,6 +254,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make validate-cluster-runtime` | Checks live Kubernetes deployments, services, agent health, and unauthenticated agent rejection. |
 | `make validate-observability-config` | Checks Prometheus scrape config, Grafana datasource provisioning, and dashboard metric queries. |
 | `make validate-local-runtime` | Checks the local API and frontend port-forwards for health, metrics, CORS, runtime config, summary, and control-panel HTML. |
+| `make validate-local-webhook` | Sends a signed local webhook `ping` to `localhost:8080` and confirms it appears in `/api/events`. |
 | `make validate-webhook-tunnel` | Checks a public webhook tunnel's `/healthz` and `/webhook`; sends a signed `ping` when `GITHUB_WEBHOOK_SECRET` is set. |
 | `make run-server` | Runs the Go API locally on `localhost:8080`. |
 | `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
