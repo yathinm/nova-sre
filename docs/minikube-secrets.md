@@ -26,7 +26,16 @@ The server deployment also sets:
 
 ```sh
 NOVA_SRE_AGENT_URL=http://nova-sre-agent.nova-sre.svc.cluster.local:8000
+RUNNER_JOB_TTL_SECONDS=900
+NOVA_SRE_ACTIVITY_LIMIT=200
+NOVA_SRE_DELIVERY_CACHE_TTL=15m
 ```
+
+Generated runner Jobs use conservative default resources for local Minikube:
+`RUNNER_JOB_CPU_REQUEST=100m`, `RUNNER_JOB_MEMORY_REQUEST=128Mi`,
+`RUNNER_JOB_CPU_LIMIT=500m`, and `RUNNER_JOB_MEMORY_LIMIT=256Mi`. Add those
+environment variables to `k8s/base/server-deployment.yaml` only when a local
+test needs different runner sizing.
 
 An example manifest is available at `k8s/examples/nova-sre-secret.example.yaml`
 for local experimentation. Keep real secret values out of git.
