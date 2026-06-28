@@ -13,6 +13,10 @@ import (
 	"time"
 
 	"github.com/yathinm/nova-sre/server-go/internal/runner"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestHealthz(t *testing.T) {
@@ -154,6 +158,117 @@ func TestAPIEventsTracksWebhookAndRunnerStatus(t *testing.T) {
 	}
 }
 
+func TestAPIJobsReflectKubernetesJobStatus(t *testing.T) {
+	started := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	completed := started.Add(3 * time.Minute)
+	clientset := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "nova-sre-push-abc123",
+			Namespace:         "runner-jobs",
+			CreationTimestamp: metav1.NewTime(started.Add(-time.Minute)),
+			Labels: map[string]string{
+				"app.kubernetes.io/name": "nova-sre-runner",
+			},
+			Annotations: map[string]string{
+				"nova-sre.io/delivery-id": "delivery-1",
+				"nova-sre.io/event":       "push",
+				"nova-sre.io/repository":  "acme/widgets",
+				"nova-sre.io/commit-sha":  "abcdef",
+				"nova-sre.io/received-at": started.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+			},
+		},
+		Status: batchv1.JobStatus{
+			StartTime:      &metav1.Time{Time: started},
+			CompletionTime: &metav1.Time{Time: completed},
+			Succeeded:      1,
+			Conditions: []batchv1.JobCondition{{
+				Type:    batchv1.JobComplete,
+				Status:  corev1.ConditionTrue,
+				Reason:  "Completed",
+				Message: "runner completed",
+			}},
+		},
+	}, &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unrelated",
+			Namespace: "runner-jobs",
+		},
+	})
+	server := NewServer("")
+	server.SetKubernetesJobLister(clientset.BatchV1().Jobs("runner-jobs"))
+
+	jobs := getJSON[struct {
+		Jobs []activityRecord `json:"jobs"`
+	}](t, server, "/api/jobs")
+
+	if len(jobs.Jobs) != 1 {
+		t.Fatalf("expected one runner job, got %#v", jobs.Jobs)
+	}
+	job := jobs.Jobs[0]
+	if job.JobName != "nova-sre-push-abc123" || job.Namespace != "runner-jobs" {
+		t.Fatalf("unexpected job identity: %#v", job)
+	}
+	if job.Status != "succeeded" || job.Reason != "Completed" || job.Message != "runner completed" {
+		t.Fatalf("unexpected status details: %#v", job)
+	}
+	if job.Event != "push" || job.Repository != "acme/widgets" || job.SHA != "abcdef" || job.DeliveryID != "delivery-1" {
+		t.Fatalf("unexpected job metadata: %#v", job)
+	}
+	if !job.UpdatedAt.Equal(completed) {
+		t.Fatalf("expected updated_at %s, got %s", completed, job.UpdatedAt)
+	}
+}
+
+func TestAPIEventsMergeMemoryAndKubernetesJobs(t *testing.T) {
+	receivedAt := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	clientset := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "nova-sre-pull-request-abc123",
+			Namespace:         "runner-jobs",
+			CreationTimestamp: metav1.NewTime(receivedAt.Add(time.Minute)),
+			Labels: map[string]string{
+				"app.kubernetes.io/name": "nova-sre-runner",
+			},
+			Annotations: map[string]string{
+				"nova-sre.io/delivery-id": "durable-delivery",
+				"nova-sre.io/event":       "pull_request",
+				"nova-sre.io/repository":  "acme/widgets",
+				"nova-sre.io/commit-sha":  "abcdef",
+				"nova-sre.io/received-at": receivedAt.Format(time.RFC3339Nano),
+			},
+		},
+	})
+	server := NewServer("")
+	server.SetKubernetesJobLister(clientset.BatchV1().Jobs("runner-jobs"))
+	server.activity.recordReceived(githubEvent{
+		DeliveryID: "memory-delivery",
+		Event:      "push",
+		Body:       []byte(`{"repository":{"full_name":"acme/api"},"after":"123456"}`),
+	})
+	server.activity.recordAccepted(githubEvent{
+		DeliveryID: "memory-delivery",
+		Event:      "push",
+	})
+
+	events := getJSON[struct {
+		Events []activityRecord `json:"events"`
+	}](t, server, "/api/events")
+
+	if len(events.Events) != 2 {
+		t.Fatalf("expected memory and Kubernetes events, got %#v", events.Events)
+	}
+	if events.Events[1].DeliveryID != "durable-delivery" {
+		t.Fatalf("expected durable event from Kubernetes jobs, got %#v", events.Events)
+	}
+	durable := events.Events[1]
+	if durable.Event != "pull_request" || durable.Repository != "acme/widgets" {
+		t.Fatalf("unexpected durable event: %#v", durable)
+	}
+	if durable.SHA != "abcdef" || durable.Status != "queued" || !durable.ReceivedAt.Equal(receivedAt) {
+		t.Fatalf("unexpected durable event details: %#v", durable)
+	}
+}
+
 func TestAPISummaryAndCORS(t *testing.T) {
 	activity := newActivityStore(10)
 	server := NewServerWithEnqueuerAndActivity("", func(context.Context, githubEvent) error { return nil }, activity)
@@ -181,6 +296,21 @@ func TestAPISummaryAndCORS(t *testing.T) {
 	}
 	if summary.Total != 1 || summary.ByStatus["accepted"] != 1 || summary.ByEvent["push"] != 1 {
 		t.Fatalf("unexpected summary: %#v", summary)
+	}
+}
+
+func TestAPIOptionsIncludeWebhookHeaders(t *testing.T) {
+	server := NewServer("")
+	req := httptest.NewRequest(http.MethodOptions, "/api/events", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-Hub-Signature-256") {
+		t.Fatalf("expected webhook signature header to be allowed, got %q", got)
 	}
 }
 
@@ -216,6 +346,21 @@ func webhookRequest(body []byte, deliveryID string, event string) *http.Request 
 	req.Header.Set(githubDeliveryHeader, deliveryID)
 	req.Header.Set(githubEventHeader, event)
 	return req
+}
+
+func getJSON[T any](t *testing.T, server *Server, path string) T {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s: expected status %d, got %d: %s", path, http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var payload T
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("%s: decode response: %v", path, err)
+	}
+	return payload
 }
 
 func signBody(body []byte, secret string) string {

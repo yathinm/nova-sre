@@ -5,10 +5,10 @@ profile by Terraform. Prometheus and Grafana run in the `observability`
 namespace, while the Go server exposes Prometheus-format application metrics at
 `/metrics` on port `8080`.
 
-Grafana is the local observability frontend, available at
+Grafana is the stats frontend for Prometheus dashboards, available at
 `http://localhost:3000` after port-forwarding the Grafana service. The separate
-Nova-SRE control panel is a product UI for pipeline triage and is documented in
-[control-panel.md](control-panel.md).
+React control panel in `frontend/` shows recent webhook and runner activity from
+the Go API; see [control-panel-demo.md](control-panel-demo.md).
 
 ## Current Phase
 
@@ -19,7 +19,8 @@ contains:
   account, RBAC, and ClusterIP services.
 - Terraform provider wiring for the `nova-sre` Minikube context.
 - Terraform-managed Helm releases for Prometheus and Grafana.
-- A Go server with `GET /healthz`, `GET /metrics`, and `POST /webhook`.
+- A Go server with `GET /healthz`, `GET /metrics`, `GET /api/events`,
+  `GET /api/jobs`, and `POST /webhook`.
 - Prometheus counters, gauges, and histograms for pipeline jobs.
 
 The next local milestone is validating the deployed server, runner jobs, agent
