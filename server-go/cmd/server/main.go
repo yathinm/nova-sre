@@ -13,7 +13,7 @@ import (
 
 func main() {
 	jobConfig := runner.JobConfigFromEnv(os.Getenv)
-	activity := newActivityStore(defaultActivityLimit)
+	activity := newActivityStore(intFromEnv("NOVA_SRE_ACTIVITY_LIMIT", defaultActivityLimit))
 	jobRunner := runner.NewJobRunner(jobConfig, nil, log.Default())
 	jobRunner.Observer = activity
 
@@ -38,6 +38,7 @@ func main() {
 		}
 	}
 	server := NewServerWithRunnerAndActivity(os.Getenv("GITHUB_WEBHOOK_SECRET"), jobRunner, activity)
+	server.SetDeliveryCacheTTL(durationFromEnv("NOVA_SRE_DELIVERY_CACHE_TTL", 15*time.Minute))
 	server.SetAPIToken(os.Getenv("NOVA_SRE_API_TOKEN"))
 	if creator, ok := jobRunner.Creator.(runner.KubernetesJobCreator); ok {
 		server.SetKubernetesJobLister(creator.Jobs)
@@ -47,6 +48,18 @@ func main() {
 	if err := http.ListenAndServe(":8080", server); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func intFromEnv(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func durationFromEnv(name string, fallback time.Duration) time.Duration {

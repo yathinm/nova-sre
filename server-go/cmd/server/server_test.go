@@ -425,6 +425,31 @@ func TestDeliveryCacheExpiresOldDeliveries(t *testing.T) {
 	}
 }
 
+func TestDeliveryCacheTTLCanBeUpdated(t *testing.T) {
+	cache := newDeliveryCache(time.Hour)
+	now := time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
+
+	if cache.Add("delivery-1", now) {
+		t.Fatal("first delivery should not be a duplicate")
+	}
+	cache.SetTTL(time.Second)
+	if cache.Add("delivery-1", now.Add(2*time.Second)) {
+		t.Fatal("delivery after updated TTL should be accepted again")
+	}
+}
+
+func TestIntFromEnv(t *testing.T) {
+	t.Setenv("NOVA_SRE_ACTIVITY_LIMIT", "25")
+	if got := intFromEnv("NOVA_SRE_ACTIVITY_LIMIT", 100); got != 25 {
+		t.Fatalf("expected parsed value 25, got %d", got)
+	}
+
+	t.Setenv("NOVA_SRE_ACTIVITY_LIMIT", "-1")
+	if got := intFromEnv("NOVA_SRE_ACTIVITY_LIMIT", 100); got != 100 {
+		t.Fatalf("expected fallback for invalid value, got %d", got)
+	}
+}
+
 func webhookRequest(body []byte, deliveryID string, event string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set(githubDeliveryHeader, deliveryID)
