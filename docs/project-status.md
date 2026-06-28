@@ -112,8 +112,8 @@ CI currently gates:
 - Add environment-specific production secret-management automation for
   `NOVA_SRE_API_TOKEN`, `NOVA_SRE_ALLOWED_ORIGINS`, GitHub credentials, and
   agent auth.
-- Automate image tag promotion so release tags update the production overlay
-  without manual edits.
+- Connect image publishing and production image stamping into a single release
+  command or workflow.
 
 ## Useful Verification Commands
 
