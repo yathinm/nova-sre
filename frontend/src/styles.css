@@ -415,6 +415,26 @@ tbody tr:last-child td {
   white-space: nowrap;
 }
 
+.detail-stack {
+  display: inline-grid;
+  gap: 3px;
+  max-width: 210px;
+}
+
+.detail-link {
+  overflow: hidden;
+  color: var(--accent-strong);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .muted-value {
   color: var(--muted);
 }
@@ -557,7 +577,8 @@ tbody tr:last-child td {
   }
 
   .code-value,
-  .truncate-value {
+  .truncate-value,
+  .detail-stack {
     max-width: 100%;
   }
 }

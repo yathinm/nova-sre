@@ -176,6 +176,8 @@ The control panel should show the delivery. With Kubernetes runner configuration
 `/api/jobs` reflects the queued runner activity and the cluster should also show a
 Job. Without cluster-backed runner configuration, the endpoint shows the in-memory
 job record captured when the webhook was accepted.
+When a failed PR diagnosis posts or updates a GitHub comment, the Recent Jobs
+detail column links directly to that comment and shows the create/update action.
 
 When finished, close the tunnel and disable or delete the temporary GitHub webhook.
 

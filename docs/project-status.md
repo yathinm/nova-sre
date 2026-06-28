@@ -50,8 +50,8 @@ management, and a more complete operator control surface.
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline
   totals, status breakdowns, recent events, recent jobs, activity persistence
-  mode, and job-level failure details such as GitHub PR comment permission
-  errors.
+  mode, GitHub PR comment links/actions, and job-level failure details such as
+  GitHub PR comment permission errors.
 - Go server can persist bounded recent activity to an atomic JSON snapshot and
   reload it on startup; the local Kubernetes deployment mounts this path for
   server container restarts.
