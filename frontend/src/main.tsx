@@ -35,6 +35,14 @@ type ListState<T> = {
 type ListResult = Omit<ListState<ApiRecord>, "updatedAt">;
 type ApiRecord = Record<string, unknown>;
 type ApiError = Error & { status?: number };
+type RuntimeConfig = {
+  activity_limit?: number;
+  delivery_cache_ttl?: string;
+  api_auth_enabled?: boolean;
+  runner_namespace?: string;
+  runner_image?: string;
+  runner_job_ttl_seconds?: number;
+};
 
 function App() {
   const [apiBase, setApiBase] = useState(initialApiBase);
@@ -53,6 +61,11 @@ function App() {
     label: "Metrics",
     value: "Checking",
     detail: "Waiting for /metrics",
+  });
+  const [runtimeCard, setRuntimeCard] = useState<CardState>({
+    label: "Runtime",
+    value: "Checking",
+    detail: "Waiting for /api/config",
   });
   const [events, setEvents] = useState<ListState<ApiRecord>>({
     items: [],
@@ -86,9 +99,10 @@ function App() {
     setJobs((current) => ({ ...current, message: "Loading runner job observations...", status: "loading" }));
 
     try {
-      const [healthOk, , eventList, jobList] = await Promise.all([
+      const [healthOk, , , eventList, jobList] = await Promise.all([
         loadHealth(client, setHealthCard),
         loadMetrics(client, setMetricsCard),
+        loadRuntimeConfig(client, setRuntimeCard),
         loadList(client, "events", ENDPOINTS.events),
         loadList(client, "jobs", ENDPOINTS.jobs),
       ]);
@@ -188,6 +202,7 @@ function App() {
       <section className="summary-grid" aria-label="Service summary">
         <SummaryCard card={healthCard} />
         <SummaryCard card={metricsCard} />
+        <SummaryCard card={runtimeCard} />
         <SummaryCard
           card={{
             label: "Recent Events",
@@ -438,6 +453,30 @@ async function loadMetrics(client: ReturnType<typeof createClient>, setCard: (ca
       value: "Unavailable",
       detail: describeFetchError(error),
       tone: "error",
+    });
+  }
+}
+
+async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCard: (card: CardState) => void) {
+  try {
+    const payload = await client.json("/api/config");
+    const config = isRecord(payload) ? (payload as RuntimeConfig) : {};
+    const authLabel = config.api_auth_enabled ? "Token" : "Open";
+    const limit = typeof config.activity_limit === "number" ? config.activity_limit : 0;
+    const ttl = textValue(config.runner_job_ttl_seconds ? `${config.runner_job_ttl_seconds}s jobs` : "", config.delivery_cache_ttl);
+    setCard({
+      label: "Runtime",
+      value: authLabel,
+      detail: limit ? `${limit} records, ${ttl}` : "Runtime config loaded",
+      tone: config.api_auth_enabled ? "ok" : "warn",
+    });
+  } catch (error) {
+    const apiError = error as ApiError;
+    setCard({
+      label: "Runtime",
+      value: apiError.status === 404 ? "Legacy" : "Unavailable",
+      detail: apiError.status === 404 ? "/api/config not exposed" : describeFetchError(error),
+      tone: apiError.status === 404 ? "warn" : "error",
     });
   }
 }
