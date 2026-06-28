@@ -1,5 +1,6 @@
 PROFILE=nova-sre
 PYTHON ?= python3
+KUBECTL_VALIDATE ?= true
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
@@ -98,7 +99,7 @@ validate-api-cors: ## Verify browser-readable Go API endpoints include CORS head
 	done
 
 validate-k8s: ## Validate Kubernetes app manifests client-side
-	kubectl apply --dry-run=client -f k8s/base -f k8s/rbac
+	kubectl apply --dry-run=client --validate=$(KUBECTL_VALIDATE) -f k8s/base -f k8s/rbac
 
 # ── Local control panel demo ──────────────────────────────────────────────────
 
