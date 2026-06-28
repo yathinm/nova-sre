@@ -96,8 +96,17 @@ make port-forward-grafana
 
 Open Grafana at `http://localhost:3000`.
 
-The local Grafana Helm values set the admin password to `admin` in
-`terraform/grafana-values.yaml`. The Nova-SRE Pipeline Stats dashboard is
+Terraform generates the local Grafana admin password by default. Retrieve it only
+when you need to sign in:
+
+```sh
+cd terraform
+terraform output -raw grafana_admin_password
+```
+
+To supply your own local password instead, set the sensitive
+`grafana_admin_password` Terraform variable with `TF_VAR_grafana_admin_password`
+or a local untracked `.tfvars` file. The Nova-SRE Pipeline Stats dashboard is
 provisioned automatically from `dashboards/pipeline-stats.json`.
 
 ## Validate the Server Metrics Endpoint
