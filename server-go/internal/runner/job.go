@@ -70,6 +70,23 @@ type AgentClient interface {
 	Diagnose(ctx context.Context, request DiagnoseRequest) error
 }
 
+type JobObserver interface {
+	ObserveJob(update JobStatusUpdate)
+}
+
+type JobStatusUpdate struct {
+	DeliveryID string
+	Event      string
+	Repository string
+	SHA        string
+	Status     string
+	Namespace  string
+	JobName    string
+	Reason     string
+	Message    string
+	ObservedAt time.Time
+}
+
 type JobResult struct {
 	Failed    bool
 	Succeeded bool
@@ -275,6 +292,7 @@ type JobRunner struct {
 	LogCollector    JobLogCollector
 	Agent           AgentClient
 	Metrics         PipelineMetrics
+	Observer        JobObserver
 	Logger          *log.Logger
 	CallbackTimeout time.Duration
 	Now             func() time.Time
@@ -303,6 +321,10 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 	if r.Creator == nil {
 		r.logf("prepared Kubernetes Job namespace=%s generate_name=%s delivery=%s event=%s",
 			job.Namespace, job.GenerateName, event.DeliveryID, event.Type)
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "prepared",
+			Namespace: job.Namespace,
+		})
 		r.metrics().JobFinished(PipelineJobMetrics{
 			Status:            "prepared",
 			Repo:              repo,
@@ -315,6 +337,11 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 
 	created, err := r.Creator.Create(ctx, job)
 	if err != nil {
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:  "error",
+			Reason:  "CreateFailed",
+			Message: err.Error(),
+		})
 		r.metrics().JobFinished(PipelineJobMetrics{
 			Status:            "failed",
 			Repo:              repo,
@@ -327,6 +354,11 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 
 	r.logf("created Kubernetes Job namespace=%s name=%s delivery=%s event=%s",
 		created.Namespace, created.Name, event.DeliveryID, event.Type)
+	r.observeJob(event, metadata, JobStatusUpdate{
+		Status:    "created",
+		Namespace: created.Namespace,
+		JobName:   created.Name,
+	})
 	r.metrics().JobFinished(PipelineJobMetrics{
 		Status:            "created",
 		Repo:              repo,
@@ -357,6 +389,14 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 
 	result, err := r.Watcher.WaitForCompletion(ctx, job.Namespace, job.Name)
 	if err != nil {
+		metadata := githubPayloadMetadata(event.Body)
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "error",
+			Namespace: job.Namespace,
+			JobName:   job.Name,
+			Reason:    "WatchFailed",
+			Message:   err.Error(),
+		})
 		r.logf("failed to observe Kubernetes Job namespace=%s name=%s delivery=%s event=%s: %v",
 			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
 		return
@@ -368,6 +408,13 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 	if result.Failed {
 		status = "failed"
 	}
+	r.observeJob(event, metadata, JobStatusUpdate{
+		Status:    status,
+		Namespace: job.Namespace,
+		JobName:   job.Name,
+		Reason:    result.Reason,
+		Message:   result.Message,
+	})
 	r.metrics().JobFinished(PipelineJobMetrics{
 		Status:     status,
 		Repo:       repo,
@@ -430,6 +477,20 @@ func (r JobRunner) metrics() PipelineMetrics {
 		return r.Metrics
 	}
 	return noopPipelineMetrics{}
+}
+
+func (r JobRunner) observeJob(event Event, metadata payloadMetadata, update JobStatusUpdate) {
+	if r.Observer == nil {
+		return
+	}
+	update.DeliveryID = firstNonEmpty(update.DeliveryID, event.DeliveryID)
+	update.Event = firstNonEmpty(update.Event, event.Type)
+	update.Repository = firstNonEmpty(update.Repository, metadata.Repo)
+	update.SHA = firstNonEmpty(update.SHA, metadata.SHA)
+	if update.ObservedAt.IsZero() {
+		update.ObservedAt = r.now()
+	}
+	r.Observer.ObserveJob(update)
 }
 
 func JobConfigFromEnv(getenv func(string) string) JobConfig {

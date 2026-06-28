@@ -13,7 +13,9 @@ import (
 
 func main() {
 	jobConfig := runner.JobConfigFromEnv(os.Getenv)
+	activity := newActivityStore(defaultActivityLimit)
 	jobRunner := runner.NewJobRunner(jobConfig, nil, log.Default())
+	jobRunner.Observer = activity
 
 	if clientset, configSource, err := runner.KubernetesClientsetFromEnv(os.Getenv); err != nil {
 		log.Printf("Kubernetes Job creation disabled: %v", err)
@@ -35,7 +37,7 @@ func main() {
 			jobRunner.CallbackTimeout = durationFromEnv("RUNNER_JOB_CALLBACK_TIMEOUT", 5*time.Minute)
 		}
 	}
-	server := NewServerWithRunner(os.Getenv("GITHUB_WEBHOOK_SECRET"), jobRunner)
+	server := NewServerWithRunnerAndActivity(os.Getenv("GITHUB_WEBHOOK_SECRET"), jobRunner, activity)
 
 	log.Println("nova-sre server starting on :8080")
 	if err := http.ListenAndServe(":8080", server); err != nil {

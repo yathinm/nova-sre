@@ -5,10 +5,10 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +36,7 @@ type Server struct {
 	webhookSecret string
 	deliveries    *deliveryCache
 	enqueueEvent  githubEventEnqueuer
+	activity      *activityStore
 }
 
 func NewServer(webhookSecret string) *Server {
@@ -43,15 +44,27 @@ func NewServer(webhookSecret string) *Server {
 }
 
 func NewServerWithRunner(webhookSecret string, eventRunner githubEventRunner) *Server {
-	return NewServerWithEnqueuer(webhookSecret, enqueueGitHubEventWithRunner(eventRunner))
+	return NewServerWithRunnerAndActivity(webhookSecret, eventRunner, newActivityStore(defaultActivityLimit))
+}
+
+func NewServerWithRunnerAndActivity(webhookSecret string, eventRunner githubEventRunner, activity *activityStore) *Server {
+	return NewServerWithEnqueuerAndActivity(webhookSecret, enqueueGitHubEventWithRunner(eventRunner), activity)
 }
 
 func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueuer) *Server {
+	return NewServerWithEnqueuerAndActivity(webhookSecret, enqueueEvent, newActivityStore(defaultActivityLimit))
+}
+
+func NewServerWithEnqueuerAndActivity(webhookSecret string, enqueueEvent githubEventEnqueuer, activity *activityStore) *Server {
+	if activity == nil {
+		activity = newActivityStore(defaultActivityLimit)
+	}
 	s := &Server{
 		mux:           http.NewServeMux(),
 		webhookSecret: webhookSecret,
 		deliveries:    newDeliveryCache(15 * time.Minute),
 		enqueueEvent:  enqueueEvent,
+		activity:      activity,
 	}
 
 	s.routes()
@@ -59,12 +72,22 @@ func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueue
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		setAPIHeaders(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
 	s.mux.ServeHTTP(w, r)
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/api/summary", s.handleAPISummary)
+	s.mux.HandleFunc("/api/events", s.handleAPIEvents)
+	s.mux.HandleFunc("/api/jobs", s.handleAPIJobs)
 	s.mux.HandleFunc("/webhook", s.handleWebhook)
 }
 
@@ -107,22 +130,71 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eventPayload := githubEvent{
+		DeliveryID: deliveryID,
+		Event:      event,
+		Body:       body,
+	}
+	s.activity.recordReceived(eventPayload)
+
 	if alreadySeen := s.deliveries.Add(deliveryID, time.Now()); alreadySeen {
+		s.activity.recordDuplicate(eventPayload)
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
-	if err := s.enqueueEvent(r.Context(), githubEvent{
-		DeliveryID: deliveryID,
-		Event:      event,
-		Body:       body,
-	}); err != nil {
+	if err := s.enqueueEvent(r.Context(), eventPayload); err != nil {
 		log.Printf("failed to enqueue GitHub event delivery=%s event=%s: %v", deliveryID, event, err)
+		s.activity.recordError(eventPayload, err.Error())
 		http.Error(w, "failed to enqueue GitHub event", http.StatusInternalServerError)
 		return
 	}
 
+	s.activity.recordAccepted(eventPayload)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleAPISummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.activity.summary())
+}
+
+func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := defaultActivityLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": s.activity.recent(limit),
+	})
+}
+
+func (s *Server) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := defaultActivityLimit
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"jobs": s.activity.recentJobs(limit),
+	})
 }
 
 func validGitHubSignature(signatureHeader string, body []byte, secret string) bool {
@@ -145,7 +217,7 @@ func validGitHubSignature(signatureHeader string, body []byte, secret string) bo
 type githubEvent struct {
 	DeliveryID string
 	Event      string
-	Body       json.RawMessage
+	Body       []byte
 }
 
 type githubEventEnqueuer func(context.Context, githubEvent) error
@@ -168,6 +240,13 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 			Body:       event.Body,
 		})
 	}
+}
+
+func setAPIHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Cache-Control", "no-store")
 }
 
 type deliveryCache struct {

@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yathinm/nova-sre/server-go/internal/runner"
 )
 
 func TestHealthz(t *testing.T) {
@@ -90,6 +93,94 @@ func TestWebhookAcceptsDuplicateDeliveryWithoutReprocessing(t *testing.T) {
 
 	if enqueued != 1 {
 		t.Fatalf("expected duplicate delivery to enqueue once, got %d", enqueued)
+	}
+}
+
+func TestAPIEventsTracksWebhookAndRunnerStatus(t *testing.T) {
+	activity := newActivityStore(10)
+	server := NewServerWithEnqueuerAndActivity("", func(_ context.Context, event githubEvent) error {
+		activity.ObserveJob(runner.JobStatusUpdate{
+			DeliveryID: event.DeliveryID,
+			Event:      event.Event,
+			Repository: "acme/widgets",
+			SHA:        "abcdef",
+			Status:     "success",
+			Namespace:  "nova-sre",
+			JobName:    "nova-sre-push-abc12",
+		})
+		return nil
+	}, activity)
+
+	req := webhookRequest([]byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef"}`), "delivery-1", "push")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected accepted webhook, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected events status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var response struct {
+		Events []activityRecord `json:"events"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode events response: %v", err)
+	}
+	if len(response.Events) != 1 {
+		t.Fatalf("expected one event, got %#v", response.Events)
+	}
+	event := response.Events[0]
+	if event.Status != "success" || event.JobName != "nova-sre-push-abc12" || event.Repository != "acme/widgets" {
+		t.Fatalf("unexpected event record: %#v", event)
+	}
+
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/jobs", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected jobs status %d, got %d", http.StatusOK, rec.Code)
+	}
+	var jobsResponse struct {
+		Jobs []activityRecord `json:"jobs"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&jobsResponse); err != nil {
+		t.Fatalf("decode jobs response: %v", err)
+	}
+	if len(jobsResponse.Jobs) != 1 || jobsResponse.Jobs[0].JobName != "nova-sre-push-abc12" {
+		t.Fatalf("unexpected jobs response: %#v", jobsResponse.Jobs)
+	}
+}
+
+func TestAPISummaryAndCORS(t *testing.T) {
+	activity := newActivityStore(10)
+	server := NewServerWithEnqueuerAndActivity("", func(context.Context, githubEvent) error { return nil }, activity)
+	req := webhookRequest([]byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef"}`), "delivery-1", "push")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected accepted webhook, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/summary", nil)
+	req.Header.Set("Origin", "http://localhost:3001")
+	rec = httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected summary status %d, got %d", http.StatusOK, rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("expected CORS header, got %q", got)
+	}
+
+	var summary activitySummary
+	if err := json.NewDecoder(rec.Body).Decode(&summary); err != nil {
+		t.Fatalf("decode summary response: %v", err)
+	}
+	if summary.Total != 1 || summary.ByStatus["accepted"] != 1 || summary.ByEvent["push"] != 1 {
+		t.Fatalf("unexpected summary: %#v", summary)
 	}
 }
 
