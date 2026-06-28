@@ -28,6 +28,9 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - Runner Jobs receive normalized GitHub context environment variables for push,
   pull request, and workflow run events, so runner images do not need to reparse
   the full webhook payload for common fields.
+- Runner Jobs can use event-specific command overrides for push, pull request,
+  and workflow run events, falling back to the global runner command or the
+  default diagnostic command.
 - Runner status is normalized into `succeeded`, duplicate, error, and other
   dashboard-friendly buckets, including diagnosis delivery success or failure
   after failed runner Jobs.
@@ -101,8 +104,8 @@ CI currently gates:
 
 - Promote the local file-backed activity store to production-grade persistence
   with persistent volumes or an external database.
-- Expand runner execution beyond metadata-rich local Jobs into configurable
-  command templates and repository-specific workflows.
+- Expand runner execution from event-specific command overrides into
+  repository-specific workflow profiles.
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.
 - Add richer GitHub PR comment controls in the control panel instead of only

@@ -57,6 +57,7 @@ type JobConfig struct {
 	Repo               string
 	SHA                string
 	Command            []string
+	CommandByEvent     map[string][]string
 	TTLSecondsFinished *int32
 	BackoffLimit       *int32
 	ServiceAccountName string
@@ -594,6 +595,7 @@ func JobConfigFromEnv(getenv func(string) string) JobConfig {
 		Repo:               strings.TrimSpace(getenv("RUNNER_REPO")),
 		SHA:                strings.TrimSpace(getenv("RUNNER_SHA")),
 		Command:            strings.Fields(getenv("RUNNER_JOB_COMMAND")),
+		CommandByEvent:     eventCommandOverrides(getenv),
 		TTLSecondsFinished: &ttl,
 		BackoffLimit:       &backoff,
 		ServiceAccountName: strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
@@ -661,7 +663,7 @@ func BuildGitHubEventJob(config JobConfig, event Event) (*batchv1.Job, error) {
 	container := corev1.Container{
 		Name:      "runner",
 		Image:     config.Image,
-		Command:   append([]string(nil), config.Command...),
+		Command:   config.commandForEvent(event.Type),
 		Resources: *config.Resources.DeepCopy(),
 		Env:       githubContextEnv(event, config, metadata),
 	}
@@ -711,8 +713,33 @@ func (c JobConfig) withDefaults(metadata payloadMetadata) JobConfig {
 	if len(c.Resources.Requests) == 0 && len(c.Resources.Limits) == 0 {
 		c.Resources = runnerResourceRequirements(nil)
 	}
+	if c.CommandByEvent == nil {
+		c.CommandByEvent = map[string][]string{}
+	}
 
 	return c
+}
+
+func (c JobConfig) commandForEvent(event string) []string {
+	event = strings.ToLower(strings.TrimSpace(event))
+	if len(c.CommandByEvent) > 0 {
+		if command := c.CommandByEvent[event]; len(command) > 0 {
+			return append([]string(nil), command...)
+		}
+	}
+	return append([]string(nil), c.Command...)
+}
+
+func eventCommandOverrides(getenv func(string) string) map[string][]string {
+	overrides := map[string][]string{}
+	for _, event := range []string{"push", "pull_request", "workflow_run"} {
+		name := "RUNNER_JOB_COMMAND_" + strings.ToUpper(strings.ReplaceAll(event, "-", "_"))
+		command := strings.Fields(getenv(name))
+		if len(command) > 0 {
+			overrides[event] = command
+		}
+	}
+	return overrides
 }
 
 func runnerResourceRequirements(getenv func(string) string) corev1.ResourceRequirements {
