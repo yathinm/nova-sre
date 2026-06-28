@@ -85,6 +85,9 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Run vet
+        run: go vet ./...
+
   agent-python:
     name: Python agent tests
     needs: changes
