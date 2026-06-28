@@ -126,3 +126,28 @@ Job. Without cluster-backed runner configuration, the endpoint shows the in-memo
 job record captured when the webhook was accepted.
 
 When finished, close the tunnel and disable or delete the temporary GitHub webhook.
+
+## Verified Real Webhook Path
+
+The real webhook path was validated with a temporary `cloudflared` tunnel and a
+temporary GitHub webhook pointed at `/webhook`. The GitHub `ping` delivery
+returned `202`, Nova-SRE created a Kubernetes runner Job, and `/api/events`
+showed the completed `ping` activity. Use this sequence for future validation:
+
+```sh
+make port-forward-server
+cloudflared tunnel --url http://localhost:8080
+```
+
+Create a temporary GitHub webhook with the tunnel URL plus `/webhook`, content
+type `application/json`, the same `GITHUB_WEBHOOK_SECRET` used by the server, and
+only the events needed for the test. Confirm the delivery in GitHub and in
+Nova-SRE:
+
+```sh
+curl -fsS http://localhost:8080/api/events
+kubectl get jobs -n nova-sre
+```
+
+Delete the temporary GitHub webhook and stop the tunnel immediately after the
+validation run.
