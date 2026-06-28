@@ -35,6 +35,8 @@ spec:
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
+            - name: NOVA_SRE_MAX_LOG_CHARS
+              value: "20000"
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:

@@ -11,7 +11,7 @@ from app.graph.diagnosis_graph import (
     validate_pr_comment,
 )
 from app.main import app, github_comment_client
-from app.models.schemas import DiagnosisState
+from app.models.schemas import DiagnosisRequest, DiagnosisState, TRUNCATED_LOG_NOTICE
 
 
 def test_diagnose_endpoint_returns_markdown_comment_with_log_block() -> None:
@@ -150,6 +150,45 @@ def test_diagnose_endpoint_neutralizes_nested_fences_in_logs() -> None:
     body = response.json()
     assert "''' inside logs" in body["pr_comment"]
     assert "``` inside logs" not in body["pr_comment"]
+
+
+def test_diagnosis_request_truncates_large_string_logs(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_MAX_LOG_CHARS", "120")
+    request = DiagnosisRequest(
+        run_id="run-large",
+        repo="acme/nova",
+        sha="abc123",
+        logs=f"start-{'a' * 120}-ERROR final failure",
+    )
+
+    logs = request.to_state_input()["logs"]
+
+    assert len(logs) <= 120
+    assert TRUNCATED_LOG_NOTICE in logs
+    assert logs.startswith("start-")
+    assert logs.endswith("ERROR final failure")
+
+
+def test_diagnosis_request_truncates_large_structured_logs(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_MAX_LOG_CHARS", "120")
+    request = DiagnosisRequest(
+        run_id="run-large-structured",
+        repo="acme/nova",
+        sha="abc123",
+        logs=[
+            {
+                "pod": "pod-a",
+                "container": "runner",
+                "logs": "\n".join([f"line {index}" for index in range(40)]),
+            }
+        ],
+    )
+
+    logs = request.to_state_input()["logs"]
+
+    assert len(logs) <= 120
+    assert TRUNCATED_LOG_NOTICE in logs
+    assert "[pod-a/runner]" in logs
 
 
 def test_validate_pr_comment_appends_safe_fallback_when_block_is_missing() -> None:

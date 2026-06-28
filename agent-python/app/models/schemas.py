@@ -1,7 +1,13 @@
+import os
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+DEFAULT_MAX_NORMALIZED_LOG_CHARS = 20_000
+MAX_LOG_CHARS_ENV = "NOVA_SRE_MAX_LOG_CHARS"
+TRUNCATED_LOG_NOTICE = "[Nova-SRE truncated the submitted logs to fit the diagnosis limit]"
 
 
 class LogEntry(BaseModel):
@@ -181,7 +187,7 @@ def build_diagnosis_result(state: DiagnosisState) -> DiagnosisResult:
 
 def _normalize_logs(logs: str | list[LogEntry]) -> str:
     if isinstance(logs, str):
-        return logs
+        return _truncate_logs(logs)
 
     blocks: list[str] = []
     for entry in logs:
@@ -191,7 +197,33 @@ def _normalize_logs(logs: str | list[LogEntry]) -> str:
             blocks.extend(f"{prefix}{line}" for line in entry.logs.splitlines() if line.strip())
         if entry.error:
             blocks.append(f"{prefix}ERROR collecting logs: {entry.error}")
-    return "\n".join(blocks)
+    return _truncate_logs("\n".join(blocks))
+
+
+def _truncate_logs(logs: str) -> str:
+    max_chars = _max_normalized_log_chars()
+    if len(logs) <= max_chars:
+        return logs
+
+    notice = f"\n{TRUNCATED_LOG_NOTICE}\n"
+    if max_chars <= len(notice) + 2:
+        return notice.strip()[:max_chars]
+
+    remaining = max_chars - len(notice)
+    head_chars = remaining // 2
+    tail_chars = remaining - head_chars
+    return f"{logs[:head_chars]}{notice}{logs[-tail_chars:]}"
+
+
+def _max_normalized_log_chars() -> int:
+    raw = os.getenv(MAX_LOG_CHARS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_NORMALIZED_LOG_CHARS
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_NORMALIZED_LOG_CHARS
+    return parsed if parsed > 0 else DEFAULT_MAX_NORMALIZED_LOG_CHARS
 
 
 def _repo_from_github_metadata(request: DiagnosisRequest) -> str | None:
