@@ -659,6 +659,18 @@ func TestIntFromEnv(t *testing.T) {
 	}
 }
 
+func TestInt64FromEnv(t *testing.T) {
+	t.Setenv("NOVA_SRE_RUNNER_LOG_LIMIT_BYTES", "4096")
+	if got := int64FromEnv("NOVA_SRE_RUNNER_LOG_LIMIT_BYTES", 100); got != 4096 {
+		t.Fatalf("expected parsed value 4096, got %d", got)
+	}
+
+	t.Setenv("NOVA_SRE_RUNNER_LOG_LIMIT_BYTES", "0")
+	if got := int64FromEnv("NOVA_SRE_RUNNER_LOG_LIMIT_BYTES", 100); got != 100 {
+		t.Fatalf("expected fallback for invalid value, got %d", got)
+	}
+}
+
 func TestDurationFromEnv(t *testing.T) {
 	t.Setenv("NOVA_SRE_READ_HEADER_TIMEOUT", "750ms")
 	if got := durationFromEnv("NOVA_SRE_READ_HEADER_TIMEOUT", time.Second); got != 750*time.Millisecond {

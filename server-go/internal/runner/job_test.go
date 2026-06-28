@@ -332,6 +332,27 @@ func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
 	}
 }
 
+func TestKubernetesJobLogCollectorUsesDefaultLogLimit(t *testing.T) {
+	collector := KubernetesJobLogCollector{}
+	options := collector.podLogOptions("runner")
+
+	if options.Container != "runner" {
+		t.Fatalf("expected container runner, got %q", options.Container)
+	}
+	if options.LimitBytes == nil || *options.LimitBytes != DefaultRunnerLogLimitBytes {
+		t.Fatalf("expected default log limit %d, got %#v", DefaultRunnerLogLimitBytes, options.LimitBytes)
+	}
+}
+
+func TestKubernetesJobLogCollectorUsesConfiguredLogLimit(t *testing.T) {
+	collector := KubernetesJobLogCollector{LogLimitBytes: 4096}
+	options := collector.podLogOptions("runner")
+
+	if options.LimitBytes == nil || *options.LimitBytes != 4096 {
+		t.Fatalf("expected configured log limit 4096, got %#v", options.LimitBytes)
+	}
+}
+
 func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	var got DiagnoseRequest
 	var gotToken string
