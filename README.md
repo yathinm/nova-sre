@@ -105,7 +105,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 
    This applies `k8s/rbac/` and `k8s/base/`, including the `nova-sre` namespace,
    the Go server, the Python agent, the frontend control panel, and the service
-   account/RBAC needed for the Go server to create Jobs and read pod logs.
+   account/RBAC needed for the Go server to create Jobs and read pod logs. The
+   target restarts the app deployments after apply so pods pick up freshly built
+   local `:local` images.
 
 7. Expose the Go server locally after its Kubernetes Service exists:
 
@@ -210,7 +212,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make tf-destroy` | Runs `terraform destroy` in `terraform/`. |
 | `make docker-env` | Prints the command that points Docker at Minikube's daemon. |
 | `make docker-build` | Builds server, agent, and frontend images into Minikube's Docker daemon. |
-| `make deploy-apps` | Applies `k8s/rbac/` and `k8s/base/` to the current Kubernetes context. |
+| `make deploy-apps` | Applies `k8s/rbac/` and `k8s/base/`, then restarts and waits for local app deployments. |
 | `make port-forward-server` | Forwards `svc/nova-sre-server` in namespace `nova-sre` to `localhost:8080`. |
 | `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |
 | `make port-forward-frontend` | Forwards `svc/nova-sre-frontend` in namespace `nova-sre` to `localhost:8081`. |
