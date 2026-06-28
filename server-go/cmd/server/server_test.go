@@ -11,6 +11,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestHealthz(t *testing.T) {
@@ -96,6 +101,124 @@ func TestWebhookRecordsRecentEventAndJob(t *testing.T) {
 	}
 	if jobs.Jobs[0].Status != "queued" {
 		t.Fatalf("expected queued job, got %q", jobs.Jobs[0].Status)
+	}
+}
+
+func TestAPIJobsReflectKubernetesJobStatus(t *testing.T) {
+	started := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	completed := started.Add(3 * time.Minute)
+	clientset := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "nova-sre-push-abc123",
+			Namespace:         "runner-jobs",
+			CreationTimestamp: metav1.NewTime(started.Add(-time.Minute)),
+			Labels: map[string]string{
+				"app.kubernetes.io/name": "nova-sre-runner",
+			},
+			Annotations: map[string]string{
+				"nova-sre.io/delivery-id": "delivery-1",
+				"nova-sre.io/event":       "push",
+				"nova-sre.io/repository":  "acme/widgets",
+				"nova-sre.io/commit-sha":  "abcdef",
+				"nova-sre.io/received-at": started.Add(-2 * time.Minute).Format(time.RFC3339Nano),
+			},
+		},
+		Status: batchv1.JobStatus{
+			StartTime:      &metav1.Time{Time: started},
+			CompletionTime: &metav1.Time{Time: completed},
+			Succeeded:      1,
+			Conditions: []batchv1.JobCondition{{
+				Type:    batchv1.JobComplete,
+				Status:  corev1.ConditionTrue,
+				Reason:  "Completed",
+				Message: "runner completed",
+			}},
+		},
+	}, &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unrelated",
+			Namespace: "runner-jobs",
+		},
+	})
+	server := NewServer("")
+	server.SetKubernetesJobLister(clientset.BatchV1().Jobs("runner-jobs"))
+
+	jobs := getJSON[struct {
+		Jobs []activityJob `json:"jobs"`
+	}](t, server, "/api/jobs")
+
+	if len(jobs.Jobs) != 1 {
+		t.Fatalf("expected one runner job, got %#v", jobs.Jobs)
+	}
+	job := jobs.Jobs[0]
+	if job.JobName != "nova-sre-push-abc123" || job.Namespace != "runner-jobs" {
+		t.Fatalf("unexpected job identity: %#v", job)
+	}
+	if job.Status != "succeeded" || job.Reason != "Completed" || job.Message != "runner completed" {
+		t.Fatalf("unexpected status details: %#v", job)
+	}
+	if job.Event != "push" || job.Repository != "acme/widgets" || job.SHA != "abcdef" || job.DeliveryID != "delivery-1" {
+		t.Fatalf("unexpected job metadata: %#v", job)
+	}
+	if job.Succeeded != 1 || job.Active != 0 || job.Failed != 0 {
+		t.Fatalf("unexpected job counters: %#v", job)
+	}
+	if job.StartedAt == nil || !job.StartedAt.Equal(started) {
+		t.Fatalf("expected started_at %s, got %#v", started, job.StartedAt)
+	}
+	if job.CompletedAt == nil || !job.CompletedAt.Equal(completed) {
+		t.Fatalf("expected completed_at %s, got %#v", completed, job.CompletedAt)
+	}
+	if !job.ObservedTime.Equal(completed) {
+		t.Fatalf("expected observed time %s, got %s", completed, job.ObservedTime)
+	}
+}
+
+func TestAPIEventsMergeMemoryAndKubernetesJobs(t *testing.T) {
+	receivedAt := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	clientset := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "nova-sre-pull-request-abc123",
+			Namespace:         "runner-jobs",
+			CreationTimestamp: metav1.NewTime(receivedAt.Add(time.Minute)),
+			Labels: map[string]string{
+				"app.kubernetes.io/name": "nova-sre-runner",
+			},
+			Annotations: map[string]string{
+				"nova-sre.io/delivery-id": "durable-delivery",
+				"nova-sre.io/event":       "pull_request",
+				"nova-sre.io/repository":  "acme/widgets",
+				"nova-sre.io/commit-sha":  "abcdef",
+				"nova-sre.io/received-at": receivedAt.Format(time.RFC3339Nano),
+			},
+		},
+	})
+	server := NewServer("")
+	server.SetKubernetesJobLister(clientset.BatchV1().Jobs("runner-jobs"))
+	server.activity.RecordEvent(activityEvent{
+		DeliveryID: "memory-delivery",
+		Event:      "push",
+		Repository: "acme/api",
+		ReceivedAt: receivedAt.Add(2 * time.Minute),
+		Status:     "accepted",
+	})
+
+	events := getJSON[struct {
+		Events []activityEvent `json:"events"`
+	}](t, server, "/api/events")
+
+	if len(events.Events) != 2 {
+		t.Fatalf("expected memory and Kubernetes events, got %#v", events.Events)
+	}
+	if events.Events[0].DeliveryID != "memory-delivery" {
+		t.Fatalf("expected newest in-memory event first, got %#v", events.Events)
+	}
+	durable := events.Events[1]
+	if durable.DeliveryID != "durable-delivery" || durable.Event != "pull_request" || durable.Repository != "acme/widgets" {
+		t.Fatalf("unexpected durable event: %#v", durable)
+	}
+	if durable.SHA != "abcdef" || durable.Status != "accepted" || !durable.ReceivedAt.Equal(receivedAt) {
+		t.Fatalf("unexpected durable event details: %#v", durable)
 	}
 }
 
