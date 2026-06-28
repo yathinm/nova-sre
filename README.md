@@ -261,6 +261,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make validate-api-cors` | Checks browser CORS headers on `/healthz`, `/metrics`, and `/api/config`. |
 | `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax checks. |
 | `make validate-production-k8s` | Renders the production overlay and checks TLS ingress, API auth/CORS secret wiring, and activity PVC wiring. |
+| `make set-production-images` | Stamps production overlay images with `RELEASE_TAG` and optional `PRODUCTION_IMAGE_REGISTRY`. |
+| `make validate-release-tools` | Tests release helper scripts against a temporary production overlay copy. |
 | `make validate-scripts` | Checks repository Ruby helper scripts for syntax errors. |
 | `make validate-secrets` | Checks tracked files for real-looking committed secrets while allowing documented placeholders. |
 | `make validate-cluster-runtime` | Checks live Kubernetes deployments, services, agent health, and unauthenticated agent rejection. |

@@ -44,8 +44,14 @@ docker push registry.example.com/nova-sre/agent:RELEASE_TAG
 docker push registry.example.com/nova-sre/frontend:RELEASE_TAG
 ```
 
-Update the `images` entries in `k8s/overlays/production/kustomization.yaml` for
-the target registry and tag before applying it.
+Stamp the production overlay with the target registry and release tag:
+
+```sh
+PRODUCTION_IMAGE_REGISTRY=registry.example.com/nova-sre \
+  RELEASE_TAG=RELEASE_TAG \
+  make set-production-images
+make validate-release-tools
+```
 
 ## 3. Environment Configuration
 
