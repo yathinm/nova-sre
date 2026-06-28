@@ -148,6 +148,22 @@ func (s *activityStore) summary() activitySummary {
 	return summary
 }
 
+func summarizeActivityRecords(records []activityRecord) activitySummary {
+	summary := activitySummary{
+		ByStatus: map[string]int{},
+		ByEvent:  map[string]int{},
+	}
+	for _, record := range records {
+		summary.Total++
+		summary.ByStatus[firstNonEmpty(record.Status, "unknown")]++
+		summary.ByEvent[firstNonEmpty(record.Event, "unknown")]++
+		if record.UpdatedAt.After(summary.UpdatedAt) {
+			summary.UpdatedAt = record.UpdatedAt
+		}
+	}
+	return summary
+}
+
 func (s *activityStore) recent(limit int) []activityRecord {
 	if s == nil {
 		return nil

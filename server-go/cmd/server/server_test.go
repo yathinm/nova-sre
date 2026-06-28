@@ -299,6 +299,46 @@ func TestAPISummaryAndCORS(t *testing.T) {
 	}
 }
 
+func TestAPISummaryIncludesKubernetesJobs(t *testing.T) {
+	receivedAt := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
+	completed := receivedAt.Add(3 * time.Minute)
+	clientset := fake.NewSimpleClientset(&batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "nova-sre-push-abc123",
+			Namespace:         "runner-jobs",
+			CreationTimestamp: metav1.NewTime(receivedAt.Add(time.Minute)),
+			Labels: map[string]string{
+				"app.kubernetes.io/name": "nova-sre-runner",
+			},
+			Annotations: map[string]string{
+				"nova-sre.io/delivery-id": "durable-delivery",
+				"nova-sre.io/event":       "push",
+				"nova-sre.io/repository":  "acme/widgets",
+				"nova-sre.io/commit-sha":  "abcdef",
+				"nova-sre.io/received-at": receivedAt.Format(time.RFC3339Nano),
+			},
+		},
+		Status: batchv1.JobStatus{
+			CompletionTime: &metav1.Time{Time: completed},
+			Succeeded:      1,
+		},
+	})
+	server := NewServer("")
+	server.SetKubernetesJobLister(clientset.BatchV1().Jobs("runner-jobs"))
+
+	summary := getJSON[activitySummary](t, server, "/api/summary")
+
+	if summary.Total != 1 {
+		t.Fatalf("expected one durable event, got %#v", summary)
+	}
+	if summary.ByStatus["succeeded"] != 1 || summary.ByEvent["push"] != 1 {
+		t.Fatalf("unexpected durable summary buckets: %#v", summary)
+	}
+	if !summary.UpdatedAt.Equal(completed) {
+		t.Fatalf("expected updated_at %s, got %s", completed, summary.UpdatedAt)
+	}
+}
+
 func TestAPIOptionsIncludeWebhookHeaders(t *testing.T) {
 	server := NewServer("")
 	req := httptest.NewRequest(http.MethodOptions, "/api/events", nil)

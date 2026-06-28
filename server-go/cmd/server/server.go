@@ -170,7 +170,7 @@ func (s *Server) handleAPISummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.activity.summary())
+	writeJSON(w, http.StatusOK, summarizeActivityRecords(s.activityEvents(r.Context(), defaultActivityLimit)))
 }
 
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
