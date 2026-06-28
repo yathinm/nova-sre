@@ -25,6 +25,7 @@ jobs:
       server-go: ${{ steps.filter.outputs.server-go }}
       agent-python: ${{ steps.filter.outputs.agent-python }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      k8s: ${{ steps.filter.outputs.k8s }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +46,10 @@ jobs:
             frontend:
               - '.github/workflows/ci.yml'
               - 'frontend/**'
+            k8s:
+              - '.github/workflows/ci.yml'
+              - 'k8s/**'
+              - 'Makefile'
 
   server-go:
     name: Go tests
@@ -119,3 +124,18 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  k8s:
+    name: Kubernetes manifests
+    needs: changes
+    if: needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate manifests
+        run: make validate-k8s

@@ -4,7 +4,7 @@ PYTHON ?= python3
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics validate-api-cors run-server run-frontend all-local test-go lint-go test-agent lint-agent
+        validate-metrics validate-api-cors validate-k8s run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -96,6 +96,9 @@ validate-api-cors: ## Verify browser-readable Go API endpoints include CORS head
 		echo "Checking $$path"; \
 		curl -fsS -D - -o /dev/null -H 'Origin: http://localhost:8081' "http://localhost:8080$$path" | grep -i '^Access-Control-Allow-Origin:'; \
 	done
+
+validate-k8s: ## Validate Kubernetes app manifests client-side
+	kubectl apply --dry-run=client -f k8s/base -f k8s/rbac
 
 # ── Local control panel demo ──────────────────────────────────────────────────
 
