@@ -36,6 +36,9 @@ func main() {
 		}
 	}
 	server := NewServerWithRunner(os.Getenv("GITHUB_WEBHOOK_SECRET"), jobRunner)
+	if creator, ok := jobRunner.Creator.(runner.KubernetesJobCreator); ok {
+		server.SetKubernetesJobLister(creator.Jobs)
+	}
 
 	log.Println("nova-sre server starting on :8080")
 	if err := http.ListenAndServe(":8080", server); err != nil {

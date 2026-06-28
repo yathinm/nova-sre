@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nova-sre-frontend
+  namespace: nova-sre
+  labels:
+    app: nova-sre-frontend
+spec:
+  selector:
+    app: nova-sre-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  type: ClusterIP

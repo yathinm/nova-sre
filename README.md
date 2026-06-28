@@ -24,14 +24,17 @@ GitHub webhook -> Go orchestrator -> Kubernetes Job -> logs and metrics -> LangG
 - **Terraform** Kubernetes and Helm provider wiring for the Minikube context
 - **Go** webhook runner
 - **Kubernetes Job** executor
+- **React** frontend control panel
 - **Prometheus and Grafana** telemetry
 - **Python LangGraph** diagnostic agent
 - **Kubernetes Secrets / External Secrets**
 
-Grafana remains the stats frontend for Prometheus dashboards. The repository also
-includes a lightweight React control panel in `frontend/` for local webhook and
-runner activity. See [docs/control-panel-demo.md](docs/control-panel-demo.md) for
-the end-to-end local demo workflow.
+The checked-in React app is the frontend control panel for local webhook and
+runner activity. Grafana remains the stats frontend for Prometheus dashboards;
+run `make port-forward-grafana` after Terraform installs the Helm release and
+open `http://localhost:3000`. See
+[docs/control-panel-demo.md](docs/control-panel-demo.md) for the end-to-end local
+demo workflow.
 
 ## Local Prerequisites
 
@@ -90,9 +93,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    make docker-build
    ```
 
-   This tags the server and agent images as `nova-sre-server:local` and
-   `nova-sre-agent:local` inside the Minikube profile, where Kubernetes can pull
-   them without a registry push.
+   This tags the server, agent, and frontend images as `nova-sre-server:local`,
+   `nova-sre-agent:local`, and `nova-sre-frontend:local` inside the Minikube
+   profile, where Kubernetes can pull them without a registry push.
 
 6. Deploy the Kubernetes app surface:
 
@@ -101,8 +104,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    ```
 
    This applies `k8s/rbac/` and `k8s/base/`, including the `nova-sre` namespace,
-   the Go server, the Python agent, and the service account/RBAC needed for the Go
-   server to create Jobs and read pod logs.
+   the Go server, the Python agent, the frontend control panel, and the service
+   account/RBAC needed for the Go server to create Jobs and read pod logs.
 
 7. Expose the Go server locally after its Kubernetes Service exists:
 
@@ -124,7 +127,17 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    cluster Jobs. Without Kubernetes configuration, the API still accepts requests
    and records recent activity in memory for the control panel.
 
-8. Validate the Prometheus metrics endpoint:
+8. Expose the frontend control panel locally after its Kubernetes Service exists:
+
+   ```sh
+   make port-forward-frontend
+   ```
+
+   Open `http://localhost:8081`. The frontend deployment sets
+   `NOVA_SRE_API_BASE=http://localhost:8080`, so keep `make port-forward-server`
+   running in another terminal while using the control panel.
+
+9. Validate the Prometheus metrics endpoint:
 
    ```sh
    make validate-metrics
@@ -134,7 +147,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    `http://localhost:8080/metrics` and checks for default Go runtime metrics or
    Nova-SRE pipeline metrics.
 
-9. Open the local observability services after Terraform has installed them.
+10. Open the local observability services after Terraform has installed them.
    Use separate terminals for these long-running port-forwards:
 
    ```sh
@@ -147,7 +160,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    [docs/observability.md](docs/observability.md) for install, port-forward, and
    scrape validation details.
 
-10. Run the React control panel in another terminal:
+11. For local frontend development outside Kubernetes, run the React control panel
+   in another terminal:
 
    ```sh
    make run-frontend
@@ -157,7 +171,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    `http://localhost:8080` unless `frontend/public/config.js`, `localStorage`, or
    the API base input points it somewhere else.
 
-11. Create a public tunnel to the local server port and configure the GitHub webhook:
+12. Create a public tunnel to the local server port and configure the GitHub webhook:
 
    ```sh
    ngrok http 8080
@@ -172,7 +186,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    In GitHub, set the webhook payload URL to the tunnel URL plus `/webhook`. Use
    the same webhook secret in GitHub and `GITHUB_WEBHOOK_SECRET`.
 
-12. Follow the event through the local pipeline:
+13. Follow the event through the local pipeline:
 
    - GitHub sends the webhook to the public tunnel.
    - The tunnel forwards to the port-forwarded Go server in Minikube.
@@ -195,10 +209,11 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make tf-apply` | Runs `terraform apply` in `terraform/`. |
 | `make tf-destroy` | Runs `terraform destroy` in `terraform/`. |
 | `make docker-env` | Prints the command that points Docker at Minikube's daemon. |
-| `make docker-build` | Builds server and agent images into Minikube's Docker daemon. |
+| `make docker-build` | Builds server, agent, and frontend images into Minikube's Docker daemon. |
 | `make deploy-apps` | Applies `k8s/rbac/` and `k8s/base/` to the current Kubernetes context. |
 | `make port-forward-server` | Forwards `svc/nova-sre-server` in namespace `nova-sre` to `localhost:8080`. |
 | `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |
+| `make port-forward-frontend` | Forwards `svc/nova-sre-frontend` in namespace `nova-sre` to `localhost:8081`. |
 | `make port-forward-prometheus` | Forwards `svc/prometheus-server` in namespace `observability` to `localhost:9090`. |
 | `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
 | `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |

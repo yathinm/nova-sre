@@ -48,7 +48,7 @@ make port-forward-server
 
 ## 2. Run the React Control Panel
 
-In another terminal:
+For local frontend development, run Vite in another terminal:
 
 ```sh
 make run-frontend
@@ -57,6 +57,15 @@ make run-frontend
 Open `http://localhost:5173`. The panel defaults to `http://localhost:8080`.
 Change `frontend/public/config.js` or use the API base input if your API is on a
 different URL.
+
+For the Minikube deployment path, use the frontend service instead:
+
+```sh
+make port-forward-frontend
+```
+
+Open `http://localhost:8081`. Keep `make port-forward-server` running because the
+frontend deployment points the browser at `http://localhost:8080`.
 
 The panel polls health, metrics, recent webhook events, and recent runner jobs.
 Rows may disappear when the Go process restarts because the current activity
