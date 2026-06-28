@@ -398,6 +398,43 @@ func TestAPIAcceptsTokenHeader(t *testing.T) {
 	}
 }
 
+func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
+	server := NewServer("webhook-secret")
+	server.SetRuntimeConfig(runtimeConfig{
+		ActivityLimit:       25,
+		DeliveryCacheTTL:    "5m0s",
+		RunnerNamespace:     "runner-jobs",
+		RunnerImage:         "nova-sre-runner:local",
+		RunnerJobTTLSeconds: 900,
+	})
+	server.SetAPIToken("control-panel-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	req.Header.Set(apiTokenHeader, "control-panel-token")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var config runtimeConfig
+	if err := json.NewDecoder(rec.Body).Decode(&config); err != nil {
+		t.Fatalf("decode config response: %v", err)
+	}
+	if config.ActivityLimit != 25 || config.DeliveryCacheTTL != "5m0s" {
+		t.Fatalf("unexpected activity config: %#v", config)
+	}
+	if !config.APIAuthEnabled {
+		t.Fatalf("expected api auth to be enabled: %#v", config)
+	}
+	if config.RunnerNamespace != "runner-jobs" || config.RunnerImage != "nova-sre-runner:local" {
+		t.Fatalf("unexpected runner config: %#v", config)
+	}
+	if strings.Contains(rec.Body.String(), "webhook-secret") || strings.Contains(rec.Body.String(), "control-panel-token") {
+		t.Fatalf("config response leaked a secret: %s", rec.Body.String())
+	}
+}
+
 func TestWebhookRejectsUnsupportedEvent(t *testing.T) {
 	server := NewServer("")
 	req := webhookRequest([]byte(`{}`), "delivery-1", "repository")

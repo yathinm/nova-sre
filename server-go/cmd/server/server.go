@@ -45,6 +45,16 @@ type Server struct {
 	activity      *activityStore
 	jobLister     kubernetesJobLister
 	apiToken      string
+	runtimeConfig runtimeConfig
+}
+
+type runtimeConfig struct {
+	ActivityLimit       int    `json:"activity_limit"`
+	DeliveryCacheTTL    string `json:"delivery_cache_ttl"`
+	APIAuthEnabled      bool   `json:"api_auth_enabled"`
+	RunnerNamespace     string `json:"runner_namespace,omitempty"`
+	RunnerImage         string `json:"runner_image,omitempty"`
+	RunnerJobTTLSeconds int32  `json:"runner_job_ttl_seconds,omitempty"`
 }
 
 func NewServer(webhookSecret string) *Server {
@@ -85,6 +95,7 @@ func (s *Server) SetKubernetesJobLister(jobLister kubernetesJobLister) {
 
 func (s *Server) SetAPIToken(token string) {
 	s.apiToken = strings.TrimSpace(token)
+	s.runtimeConfig.APIAuthEnabled = s.apiToken != ""
 }
 
 func (s *Server) SetDeliveryCacheTTL(ttl time.Duration) {
@@ -92,6 +103,16 @@ func (s *Server) SetDeliveryCacheTTL(ttl time.Duration) {
 		return
 	}
 	s.deliveries.SetTTL(ttl)
+	s.runtimeConfig.DeliveryCacheTTL = ttl.String()
+}
+
+func (s *Server) SetRuntimeConfig(config runtimeConfig) {
+	config.APIAuthEnabled = s.runtimeConfig.APIAuthEnabled
+	if strings.TrimSpace(config.DeliveryCacheTTL) == "" && s.deliveries != nil {
+		config.DeliveryCacheTTL = s.deliveries.TTL().String()
+	}
+	s.runtimeConfig = config
+	s.runtimeConfig.APIAuthEnabled = s.apiToken != ""
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -112,10 +133,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.Handle("/metrics", promhttp.Handler())
+	s.mux.HandleFunc("/api/config", s.handleAPIConfig)
 	s.mux.HandleFunc("/api/summary", s.handleAPISummary)
 	s.mux.HandleFunc("/api/events", s.handleAPIEvents)
 	s.mux.HandleFunc("/api/jobs", s.handleAPIJobs)
 	s.mux.HandleFunc("/webhook", s.handleWebhook)
+}
+
+func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.runtimeConfig)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -496,6 +527,12 @@ func (c *deliveryCache) SetTTL(ttl time.Duration) {
 	if ttl > 0 {
 		c.ttl = ttl
 	}
+}
+
+func (c *deliveryCache) TTL() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ttl
 }
 
 func (c *deliveryCache) Add(deliveryID string, now time.Time) bool {
