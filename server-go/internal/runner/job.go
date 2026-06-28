@@ -39,6 +39,7 @@ const (
 	defaultRunnerMemoryRequest = "128Mi"
 	defaultRunnerCPULimit      = "500m"
 	defaultRunnerMemoryLimit   = "256Mi"
+	DefaultRunnerLogLimitBytes = int64(64 * 1024)
 )
 
 var dnsLabelPattern = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -181,7 +182,8 @@ func (w KubernetesJobWatcher) WaitForCompletion(ctx context.Context, namespace s
 }
 
 type KubernetesJobLogCollector struct {
-	Pods coretypedv1.PodInterface
+	Pods          coretypedv1.PodInterface
+	LogLimitBytes int64
 }
 
 func (c KubernetesJobLogCollector) CollectJobLogs(ctx context.Context, namespace string, jobName string) ([]LogEntry, error) {
@@ -212,13 +214,23 @@ func (c KubernetesJobLogCollector) CollectJobLogs(ctx context.Context, namespace
 
 func (c KubernetesJobLogCollector) collectContainerLog(ctx context.Context, podName string, containerName string) LogEntry {
 	entry := LogEntry{Pod: podName, Container: containerName}
-	body, err := c.Pods.GetLogs(podName, &corev1.PodLogOptions{Container: containerName}).DoRaw(ctx)
+	body, err := c.Pods.GetLogs(podName, c.podLogOptions(containerName)).DoRaw(ctx)
 	if err != nil {
 		entry.Error = err.Error()
 		return entry
 	}
 	entry.Logs = string(body)
 	return entry
+}
+
+func (c KubernetesJobLogCollector) podLogOptions(containerName string) *corev1.PodLogOptions {
+	options := &corev1.PodLogOptions{Container: containerName}
+	limit := c.LogLimitBytes
+	if limit <= 0 {
+		limit = DefaultRunnerLogLimitBytes
+	}
+	options.LimitBytes = &limit
+	return options
 }
 
 type HTTPAgentClient struct {

@@ -30,6 +30,8 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - Python agent accepts runner diagnosis payloads, truncates oversized normalized
   logs, produces deterministic fallback diagnoses, and can post GitHub PR
   comments when metadata and token permissions are present.
+- Go runner log collection asks Kubernetes for a bounded number of pod log bytes
+  before forwarding failed-job logs to the agent.
 - Server-to-agent `/diagnose` calls can be protected with
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline

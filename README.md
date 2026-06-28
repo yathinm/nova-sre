@@ -117,7 +117,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    and limits for Minikube, and generated runner Jobs default to `100m` CPU /
    `128Mi` memory requests with `500m` CPU / `256Mi` memory limits. The server
    keeps the latest 200 activity records in memory and deduplicates GitHub
-   deliveries for 15 minutes by default.
+   deliveries for 15 minutes by default. Runner pod logs sent to the agent are
+   capped at 64 KiB per container by default before the agent applies its
+   normalized log cap.
 
 7. Expose the Go server locally after its Kubernetes Service exists:
 

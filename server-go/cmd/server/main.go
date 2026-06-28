@@ -33,7 +33,8 @@ func main() {
 				PollInterval: durationFromEnv("RUNNER_JOB_POLL_INTERVAL", 2*time.Second),
 			}
 			jobRunner.LogCollector = runner.KubernetesJobLogCollector{
-				Pods: clientset.CoreV1().Pods(jobConfig.Namespace),
+				Pods:          clientset.CoreV1().Pods(jobConfig.Namespace),
+				LogLimitBytes: int64FromEnv("NOVA_SRE_RUNNER_LOG_LIMIT_BYTES", runner.DefaultRunnerLogLimitBytes),
 			}
 			jobRunner.Agent = agent
 			jobRunner.CallbackTimeout = durationFromEnv("RUNNER_JOB_CALLBACK_TIMEOUT", 5*time.Minute)
@@ -87,6 +88,18 @@ func intFromEnv(name string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func int64FromEnv(name string, fallback int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || parsed <= 0 {
 		return fallback
 	}

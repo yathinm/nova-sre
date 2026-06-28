@@ -41,6 +41,7 @@ NOVA_SRE_AGENT_TOKEN=<from nova-sre-secrets when configured>
 RUNNER_JOB_TTL_SECONDS=900
 NOVA_SRE_ACTIVITY_LIMIT=200
 NOVA_SRE_DELIVERY_CACHE_TTL=15m
+NOVA_SRE_RUNNER_LOG_LIMIT_BYTES=65536
 NOVA_SRE_READ_HEADER_TIMEOUT=5s
 NOVA_SRE_READ_TIMEOUT=15s
 NOVA_SRE_WRITE_TIMEOUT=30s
@@ -64,6 +65,9 @@ test needs different runner sizing.
 The agent truncates normalized submitted logs to `NOVA_SRE_MAX_LOG_CHARS` before
 classification and optional LLM prompting. The default keeps diagnosis payloads
 bounded while preserving the beginning and end of oversized log streams.
+The Go server also asks Kubernetes for at most
+`NOVA_SRE_RUNNER_LOG_LIMIT_BYTES` bytes per runner pod container before sending
+logs to the agent, keeping raw log collection bounded at the source.
 
 An example manifest is available at `k8s/examples/nova-sre-secret.example.yaml`
 for local experimentation. Keep real secret values out of git.

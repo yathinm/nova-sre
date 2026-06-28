@@ -69,6 +69,8 @@ spec:
               value: "200"
             - name: NOVA_SRE_DELIVERY_CACHE_TTL
               value: "15m"
+            - name: NOVA_SRE_RUNNER_LOG_LIMIT_BYTES
+              value: "65536"
           ports:
             - containerPort: 8080
           resources:
