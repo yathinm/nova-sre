@@ -47,6 +47,29 @@ def test_diagnose_endpoint_returns_markdown_comment_with_log_block() -> None:
     assert body["github_comment_url"] is None
 
 
+def test_diagnose_endpoint_requires_agent_token_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_AGENT_TOKEN", "agent-token")
+    client = TestClient(app)
+    payload = {
+        "run_id": "run-token",
+        "repo": "acme/nova",
+        "sha": "abc123",
+        "logs": "ERROR deployment failed",
+    }
+
+    missing = client.post("/diagnose", json=payload)
+    wrong = client.post("/diagnose", headers={"X-Nova-SRE-Agent-Token": "wrong"}, json=payload)
+    allowed = client.post(
+        "/diagnose",
+        headers={"X-Nova-SRE-Agent-Token": "agent-token"},
+        json=payload,
+    )
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert allowed.status_code == 200
+
+
 def test_diagnose_endpoint_uses_safe_fallback_for_empty_logs() -> None:
     client = TestClient(app)
 

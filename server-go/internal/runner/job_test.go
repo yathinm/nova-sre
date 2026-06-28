@@ -334,6 +334,7 @@ func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
 
 func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	var got DiagnoseRequest
+	var gotToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
@@ -341,6 +342,7 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 		if r.URL.Path != "/diagnose" {
 			t.Fatalf("expected /diagnose path, got %s", r.URL.Path)
 		}
+		gotToken = r.Header.Get("X-Nova-SRE-Agent-Token")
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -348,7 +350,7 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewHTTPAgentClient(server.URL, time.Second)
+	client, err := NewHTTPAgentClient(server.URL, time.Second, "agent-token")
 	if err != nil {
 		t.Fatalf("NewHTTPAgentClient returned error: %v", err)
 	}
@@ -369,6 +371,9 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}
 	if len(got.Logs) != 1 || got.Logs[0].Logs != "boom" {
 		t.Fatalf("expected request logs, got %#v", got.Logs)
+	}
+	if gotToken != "agent-token" {
+		t.Fatalf("expected agent token header, got %q", gotToken)
 	}
 }
 

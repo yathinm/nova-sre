@@ -25,7 +25,7 @@ func main() {
 		jobs := clientset.BatchV1().Jobs(jobConfig.Namespace)
 		jobRunner.Creator = runner.KubernetesJobCreator{Jobs: jobs}
 		log.Printf("Kubernetes Job creation enabled using %s config", configSource)
-		if agent, err := runner.NewHTTPAgentClient(os.Getenv("NOVA_SRE_AGENT_URL"), durationFromEnv("NOVA_SRE_AGENT_TIMEOUT", 10*time.Second)); err != nil {
+		if agent, err := runner.NewHTTPAgentClient(os.Getenv("NOVA_SRE_AGENT_URL"), durationFromEnv("NOVA_SRE_AGENT_TIMEOUT", 10*time.Second), os.Getenv("NOVA_SRE_AGENT_TOKEN")); err != nil {
 			log.Printf("agent client disabled: %v", err)
 		} else if agent != nil {
 			jobRunner.Watcher = runner.KubernetesJobWatcher{
