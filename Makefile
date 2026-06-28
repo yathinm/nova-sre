@@ -1,5 +1,5 @@
 PROFILE=nova-sre
-PYTHON ?= python3
+PYTHON ?= python3.11
 KUBECTL_VALIDATE ?= true
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \

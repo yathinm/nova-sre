@@ -43,7 +43,7 @@ demo workflow.
 - kubectl
 - Terraform >= 1.6
 - Go, for server tests and local development
-- Python with the agent tooling installed, for agent tests and local development
+- Python 3.11 with the agent tooling installed, for agent tests and local development
 - Node.js and npm, for the React control panel
 - A public tunnel tool, such as ngrok or cloudflared, when testing GitHub webhooks
 
