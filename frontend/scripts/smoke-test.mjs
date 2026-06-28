@@ -11,6 +11,7 @@ const checks = [
   ["api token storage", 'window.localStorage.setItem("novaSreApiToken", apiToken)'],
   ["runtime summary card", 'label: "Runtime"'],
   ["pipeline metrics filter", 'name.startsWith("pipeline_")'],
+  ["delivery plural copy", 'summaryDetail(events, "delivery", "deliveries")'],
 ];
 
 const failures = checks
