@@ -80,12 +80,15 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 
    ```sh
    make tf-init
+   make tf-plan
    make tf-apply
    ```
 
    The Terraform provider configuration targets the `nova-sre` kube context. The
    current Terraform tree installs the local observability namespace plus Prometheus
-   and Grafana Helm releases.
+   and Grafana Helm releases. If those resources already exist in Minikube but this
+   checkout does not have Terraform state, run `make tf-import-observability` before
+   `make tf-plan`.
 
 5. Build application images inside Minikube's Docker daemon:
 
@@ -210,8 +213,10 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make addons-ingress` | Enables the Minikube ingress addon. |
 | `make dashboard` | Opens the Minikube dashboard. |
 | `make tf-init` | Runs `terraform init` in `terraform/`. |
+| `make tf-plan` | Runs `terraform plan` in `terraform/`. |
 | `make tf-apply` | Runs `terraform apply` in `terraform/`. |
 | `make tf-destroy` | Runs `terraform destroy` in `terraform/`. |
+| `make tf-import-observability` | Imports existing local observability resources into Terraform state. |
 | `make docker-env` | Prints the command that points Docker at Minikube's daemon. |
 | `make docker-build` | Builds server, agent, and frontend images into Minikube's Docker daemon. |
 | `make deploy-apps` | Applies `k8s/rbac/` and `k8s/base/`, then restarts and waits for local app deployments. |
