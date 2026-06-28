@@ -298,7 +298,7 @@ function App() {
             <strong key="event">{textValue(item.event, item.type)}</strong>,
             <TimeValue key="observed" value={textValue(item.observed_time, item.observedTime, item.created_at, item.createdAt, item.completed_at, "")} />,
             <StatusPill key="status" value={textValue(item.status, item.result, resultFromBooleans(item))} />,
-            <DetailValue key="detail" value={jobDetail(item)} />,
+            <JobDetailValue key="detail" item={item} />,
           ])}
         />
       </section>
@@ -445,8 +445,21 @@ function CodeValue({ value }: { value: string }) {
   return <code className="code-value">{value}</code>;
 }
 
-function DetailValue({ value }: { value: string }) {
-  return <span className="truncate-value" title={value}>{value}</span>;
+function JobDetailValue({ item }: { item: ApiRecord }) {
+  const detail = jobDetail(item);
+  const url = githubCommentURL(item);
+  const action = githubCommentAction(item);
+  if (url) {
+    return (
+      <span className="detail-stack">
+        <a href={url} target="_blank" rel="noreferrer" className="detail-link">
+          Open comment
+        </a>
+        {action ? <span className="detail-meta">{statusLabel(action)}</span> : null}
+      </span>
+    );
+  }
+  return <span className="truncate-value" title={detail}>{detail}</span>;
 }
 
 function TimeValue({ value }: { value: string }) {
@@ -715,6 +728,29 @@ function toneForStatus(status: string) {
 
 function jobDetail(item: ApiRecord) {
   return textValue(item.message, item.reason, item.github_comment_error, item.github_comment_action, "No detail");
+}
+
+function githubCommentURL(item: ApiRecord) {
+  const explicit = textValue(item.github_comment_url, "");
+  if (isGitHubURL(explicit)) {
+    return explicit;
+  }
+  const message = textValue(item.message, "");
+  return isGitHubURL(message) ? message : "";
+}
+
+function githubCommentAction(item: ApiRecord) {
+  const action = textValue(item.github_comment_action, item.reason, "");
+  return ["created", "updated", "skipped", "failed"].includes(action.trim().toLowerCase()) ? action : "";
+}
+
+function isGitHubURL(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "github.com";
+  } catch {
+    return false;
+  }
 }
 
 function statusLabel(status: string) {
