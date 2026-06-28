@@ -228,6 +228,51 @@ def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> Non
     assert "deploy failed" in requests[0].content.decode()
 
 
+def test_diagnose_endpoint_posts_github_comment_with_metadata_and_token(monkeypatch) -> None:
+    async def post_comment(
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str,
+    ):
+        assert owner == "acme"
+        assert repo == "nova"
+        assert pr_number == 42
+        assert "## Nova-SRE diagnosis" in body
+        return type(
+            "GitHubResult",
+            (),
+            {
+                "posted": True,
+                "url": "https://github.com/acme/nova/pull/42#comment",
+                "error": None,
+            },
+        )()
+
+    monkeypatch.setattr(github_comment_client, "post_comment", post_comment)
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "run_id": "run-902",
+            "repo": "acme/nova",
+            "sha": "abc902",
+            "logs": "ERROR deploy failed",
+            "github_owner": "acme",
+            "github_repo": "nova",
+            "github_pr_number": 42,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["github_comment_posted"] is True
+    assert body["github_comment_url"] == "https://github.com/acme/nova/pull/42#comment"
+    assert body["github_comment_error"] is None
+
+
 def test_diagnose_endpoint_dry_runs_github_comment_without_token(monkeypatch) -> None:
     monkeypatch.setattr(github_comment_client, "token", None)
     client = TestClient(app)
@@ -255,6 +300,70 @@ def test_diagnose_endpoint_dry_runs_github_comment_without_token(monkeypatch) ->
     )
 
 
+def test_diagnose_endpoint_dry_runs_github_comment_without_metadata() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "run_id": "run-903",
+            "repo": "acme/nova",
+            "sha": "abc903",
+            "logs": "ERROR deploy failed",
+            "post_github_comment": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["github_comment_posted"] is False
+    assert body["github_comment_url"] is None
+    assert body["github_comment_error"] == (
+        "GitHub PR comment posting requires github_owner, github_repo, and github_pr_number."
+    )
+
+
+def test_diagnose_endpoint_keeps_api_failure_nonfatal(monkeypatch) -> None:
+    async def post_comment(
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str,
+    ):
+        return type(
+            "GitHubResult",
+            (),
+            {
+                "posted": False,
+                "url": None,
+                "error": "GitHub PR comment posting failed with HTTP 500.",
+            },
+        )()
+
+    monkeypatch.setattr(github_comment_client, "post_comment", post_comment)
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "run_id": "run-904",
+            "repo": "acme/nova",
+            "sha": "abc904",
+            "logs": "ERROR deploy failed",
+            "github_owner": "acme",
+            "github_repo": "nova",
+            "github_pr_number": 42,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["github_comment_posted"] is False
+    assert body["github_comment_url"] is None
+    assert body["github_comment_error"] == "GitHub PR comment posting failed with HTTP 500."
+
+
 @pytest.mark.asyncio
 async def test_github_comment_client_dry_runs_without_token(monkeypatch) -> None:
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -270,3 +379,49 @@ async def test_github_comment_client_dry_runs_without_token(monkeypatch) -> None
     assert result.posted is False
     assert result.url is None
     assert result.error == "GITHUB_TOKEN is not set; skipped GitHub PR comment posting."
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_handles_api_failure() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"message": "server error"})
+
+    client = GitHubPullRequestCommentClient(
+        token="test-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body="comment body",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is False
+    assert result.url is None
+    assert result.error == "GitHub PR comment posting failed with HTTP 500."
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_handles_transport_failure() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("network unavailable", request=request)
+
+    client = GitHubPullRequestCommentClient(
+        token="test-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body="comment body",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is False
+    assert result.url is None
+    assert result.error == "GitHub PR comment posting failed: network unavailable"
