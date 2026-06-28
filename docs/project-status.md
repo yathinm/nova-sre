@@ -26,7 +26,8 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - Kubernetes runner Jobs are created from webhook deliveries and retained briefly
   for inspection with TTL cleanup.
 - Runner status is normalized into `succeeded`, duplicate, error, and other
-  dashboard-friendly buckets.
+  dashboard-friendly buckets, including diagnosis delivery success or failure
+  after failed runner Jobs.
 - Python agent accepts runner diagnosis payloads, truncates oversized normalized
   logs, produces deterministic fallback diagnoses, and can post GitHub PR
   comments when metadata and token permissions are present.
