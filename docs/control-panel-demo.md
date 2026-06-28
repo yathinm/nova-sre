@@ -74,8 +74,9 @@ lists are process-local memory.
 
 If `NOVA_SRE_API_TOKEN` is configured on the Go server, enter the same value in
 the control panel's API token field before refreshing. The token is stored in
-browser local storage for the local demo browser only. Do not include token
-values in screenshots, logs, PRs, or issues.
+browser session storage for the current demo tab only, and any legacy local
+storage token is cleared. Do not include token values in screenshots, logs, PRs,
+or issues.
 
 ## 3. Start a Temporary Webhook Tunnel
 

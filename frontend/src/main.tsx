@@ -112,7 +112,8 @@ function App() {
     const nextApiBase = trimTrailingSlash(apiBase || DEFAULT_API_BASE);
     setApiBase(nextApiBase);
     window.localStorage.setItem("novaSreApiBase", nextApiBase);
-    window.localStorage.setItem("novaSreApiToken", apiToken);
+    window.localStorage.removeItem("novaSreApiToken");
+    window.sessionStorage.setItem("novaSreApiToken", apiToken);
     setNotice("");
     setRefreshing(true);
     setEvents((current) => ({ ...current, message: "Loading recent webhook deliveries...", status: "loading" }));
@@ -461,7 +462,8 @@ function initialApiBase() {
 
 function initialApiToken() {
   const configured = String(window.NOVA_SRE_API_TOKEN || "").trim();
-  const saved = window.localStorage.getItem("novaSreApiToken");
+  window.localStorage.removeItem("novaSreApiToken");
+  const saved = window.sessionStorage.getItem("novaSreApiToken");
   return configured || saved || "";
 }
 
