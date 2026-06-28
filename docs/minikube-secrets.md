@@ -9,7 +9,8 @@ kubectl create secret generic nova-sre-secrets \
   --namespace nova-sre \
   --from-literal=GITHUB_WEBHOOK_SECRET="$GITHUB_WEBHOOK_SECRET" \
   --from-literal=GITHUB_TOKEN="$GITHUB_TOKEN" \
-  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY"
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --from-literal=NOVA_SRE_ALLOWED_ORIGINS=http://localhost:8081
 ```
 
 For local testing, export the values in your shell first. Use a webhook secret
@@ -36,6 +37,8 @@ NOVA_SRE_READ_HEADER_TIMEOUT=5s
 where browser-readable endpoints return wildcard CORS headers. Set it to a
 comma-separated list such as `http://localhost:8081,https://panel.example.com`
 when you want the Go API to echo only approved frontend origins.
+The Kubernetes server deployment reads this value from the optional
+`NOVA_SRE_ALLOWED_ORIGINS` key in `nova-sre-secrets`.
 
 Generated runner Jobs use conservative default resources for local Minikube:
 `RUNNER_JOB_CPU_REQUEST=100m`, `RUNNER_JOB_MEMORY_REQUEST=128Mi`,
