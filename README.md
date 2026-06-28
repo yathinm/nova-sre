@@ -42,7 +42,7 @@ demo workflow.
 - Minikube
 - kubectl
 - Terraform >= 1.6
-- Go, for server tests and local development
+- Go 1.25, for server tests and local development
 - Python 3.11 with the agent tooling installed, for agent tests and local development
 - Node.js and npm, for the React control panel
 - A public tunnel tool, such as ngrok or cloudflared, when testing GitHub webhooks
@@ -252,6 +252,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make validate-webhook-tunnel` | Checks a public webhook tunnel's `/healthz` and `/webhook`; sends a signed `ping` when `GITHUB_WEBHOOK_SECRET` is set. |
 | `make run-server` | Runs the Go API locally on `localhost:8080`. |
 | `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
+| `make audit-go` | Runs pinned `govulncheck` against the Go server. |
+| `make audit-frontend` | Runs `npm audit --audit-level=high` for frontend dependencies. |
+| `make audit-deps` | Runs the Go and frontend dependency vulnerability audits. |
 | `make test-go` | Runs Go tests under `server-go/`. |
 | `make lint-go` | Runs `go vet ./...` under `server-go/`. |
 | `make test-agent` | Runs `python -m pytest` under `agent-python/`. |

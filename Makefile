@@ -1,11 +1,13 @@
 PROFILE=nova-sre
 PYTHON ?= python3.11
 KUBECTL_VALIDATE ?= true
+GOVULNCHECK_VERSION ?= v1.5.0
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics validate-api-cors validate-k8s validate-scripts validate-webhook-tunnel run-server run-frontend all-local test-go lint-go test-agent lint-agent
+        validate-metrics validate-api-cors validate-k8s validate-scripts validate-webhook-tunnel run-server run-frontend all-local \
+        test-go lint-go audit-go test-agent lint-agent audit-frontend audit-deps
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -130,6 +132,9 @@ run-server: ## Run the Go API locally on localhost:8080
 run-frontend: ## Run the React control panel locally on localhost:5173
 	cd frontend && npm run dev
 
+audit-frontend: ## Audit frontend dependencies for high severity vulnerabilities
+	cd frontend && npm audit --audit-level=high
+
 # ── Go server ─────────────────────────────────────────────────────────────────
 
 test-go: ## Run Go unit tests
@@ -137,6 +142,9 @@ test-go: ## Run Go unit tests
 
 lint-go: ## Lint Go source
 	cd server-go && go vet ./...
+
+audit-go: ## Audit Go dependencies and reachable symbols for known vulnerabilities
+	cd server-go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 # ── Python agent ──────────────────────────────────────────────────────────────
 
@@ -147,5 +155,7 @@ lint-agent: ## Lint Python agent source
 	cd agent-python && $(PYTHON) -m ruff check .
 
 # ── Composite ─────────────────────────────────────────────────────────────────
+
+audit-deps: audit-go audit-frontend ## Audit Go and frontend dependencies
 
 all-local: cluster-create addons tf-init tf-apply docker-build deploy-apps ## Full local setup from scratch
