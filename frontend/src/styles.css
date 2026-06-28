@@ -108,6 +108,9 @@ h2 {
 }
 
 .api-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 44px;
   height: 44px;
   border: 0;
@@ -124,6 +127,16 @@ h2 {
 .api-row button:disabled {
   cursor: progress;
   opacity: 0.72;
+}
+
+.spin-icon {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .refresh-row {

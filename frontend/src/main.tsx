@@ -1,5 +1,6 @@
 import { StrictMode, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { RefreshCw } from "lucide-react";
 import "./styles.css";
 
 declare global {
@@ -175,7 +176,7 @@ function App() {
               onChange={(event) => setApiBase(event.target.value)}
             />
             <button type="submit" title="Refresh data" aria-label="Refresh data" disabled={refreshing}>
-              {refreshing ? "..." : "↻"}
+              <RefreshCw className={refreshing ? "spin-icon" : undefined} aria-hidden="true" size={20} strokeWidth={2.5} />
             </button>
           </div>
           <label htmlFor="api-token">API token</label>
