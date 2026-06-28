@@ -87,6 +87,13 @@ func (s *Server) SetAPIToken(token string) {
 	s.apiToken = strings.TrimSpace(token)
 }
 
+func (s *Server) SetDeliveryCacheTTL(ttl time.Duration) {
+	if ttl <= 0 || s.deliveries == nil {
+		return
+	}
+	s.deliveries.SetTTL(ttl)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		setAPIHeaders(w)
@@ -480,6 +487,14 @@ func newDeliveryCache(ttl time.Duration) *deliveryCache {
 	return &deliveryCache{
 		ttl:  ttl,
 		seen: make(map[string]time.Time),
+	}
+}
+
+func (c *deliveryCache) SetTTL(ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ttl > 0 {
+		c.ttl = ttl
 	}
 }
 

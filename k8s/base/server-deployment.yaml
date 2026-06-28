@@ -41,6 +41,10 @@ spec:
               value: http://nova-sre-agent.nova-sre.svc.cluster.local:8000
             - name: RUNNER_JOB_TTL_SECONDS
               value: "900"
+            - name: NOVA_SRE_ACTIVITY_LIMIT
+              value: "200"
+            - name: NOVA_SRE_DELIVERY_CACHE_TTL
+              value: "15m"
           ports:
             - containerPort: 8080
           readinessProbe:

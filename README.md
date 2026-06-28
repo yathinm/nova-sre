@@ -112,7 +112,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    target restarts the app deployments after apply so pods pick up freshly built
    local `:local` images. Local runner Jobs are retained for 15 minutes after
    completion so you have time to inspect logs without letting completed Jobs
-   accumulate indefinitely.
+   accumulate indefinitely. The server keeps the latest 200 activity records in
+   memory and deduplicates GitHub deliveries for 15 minutes by default.
 
 7. Expose the Go server locally after its Kubernetes Service exists:
 
