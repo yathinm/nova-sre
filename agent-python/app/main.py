@@ -2,7 +2,12 @@ from fastapi import FastAPI
 
 from app.clients.github_comments import GitHubPullRequestCommentClient
 from app.graph.diagnosis_graph import build_graph
-from app.models.schemas import DiagnosisRequest, DiagnosisResponse, DiagnosisState
+from app.models.schemas import (
+    DiagnosisRequest,
+    DiagnosisResponse,
+    DiagnosisState,
+    build_diagnosis_result,
+)
 
 app = FastAPI(title="Nova-SRE Agent", version="0.1.0")
 diagnosis_graph = build_graph()
@@ -16,7 +21,7 @@ async def health() -> dict:
 
 @app.post("/diagnose", response_model=DiagnosisResponse)
 async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
-    result = diagnosis_graph.invoke(request.model_dump(exclude={"post_github_comment"}))
+    result = diagnosis_graph.invoke(request.to_state_input())
     state = DiagnosisState.model_validate(result)
     if request.post_github_comment:
         if state.github_owner and state.github_repo and state.github_pr_number:
@@ -35,10 +40,16 @@ async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
                 "github_pr_number."
             )
 
+    diagnosis_result = build_diagnosis_result(state)
     return DiagnosisResponse(
         run_id=state.run_id,
         repo=state.repo,
         sha=state.sha,
+        status=diagnosis_result.status,
+        summary=diagnosis_result.summary,
+        root_cause=diagnosis_result.root_cause,
+        suggested_fix=diagnosis_result.suggested_fix,
+        result=diagnosis_result,
         diagnosis=state.diagnosis,
         pr_comment=state.pr_comment,
         github_owner=state.github_owner,
