@@ -249,6 +249,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make validate-api-cors` | Checks browser CORS headers on `/healthz`, `/metrics`, and `/api/config`. |
 | `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax checks. |
 | `make validate-scripts` | Checks repository Ruby helper scripts for syntax errors. |
+| `make validate-local-runtime` | Checks the local API and frontend port-forwards for health, metrics, CORS, runtime config, summary, and control-panel HTML. |
 | `make validate-webhook-tunnel` | Checks a public webhook tunnel's `/healthz` and `/webhook`; sends a signed `ping` when `GITHUB_WEBHOOK_SECRET` is set. |
 | `make run-server` | Runs the Go API locally on `localhost:8080`. |
 | `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
