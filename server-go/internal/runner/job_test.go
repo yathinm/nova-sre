@@ -251,6 +251,24 @@ func TestJobConfigFromEnvDefaultsInvalidGitHubCommentModeToUpsert(t *testing.T) 
 	}
 }
 
+func TestParseRunnerCommandSupportsShellScripts(t *testing.T) {
+	got := parseRunnerCommand("/bin/sh -c set -eu; go test ./...")
+	want := []string{"/bin/sh", "-c", "set -eu; go test ./..."}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected command length: got %#v want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected command[%d]: got %q want %q", i, got[i], want[i])
+		}
+	}
+
+	fields := parseRunnerCommand("/bin/runner --pull-request")
+	if len(fields) != 2 || fields[0] != "/bin/runner" || fields[1] != "--pull-request" {
+		t.Fatalf("expected tokenized command, got %#v", fields)
+	}
+}
+
 func TestBuildGitHubEventJobUsesEventCommandOverride(t *testing.T) {
 	job, err := BuildGitHubEventJob(JobConfig{
 		Image:   "ghcr.io/example/nova-runner:test",

@@ -598,7 +598,7 @@ func JobConfigFromEnv(getenv func(string) string) JobConfig {
 		Image:               firstNonEmpty(getenv("RUNNER_JOB_IMAGE"), defaultImage),
 		Repo:                strings.TrimSpace(getenv("RUNNER_REPO")),
 		SHA:                 strings.TrimSpace(getenv("RUNNER_SHA")),
-		Command:             strings.Fields(getenv("RUNNER_JOB_COMMAND")),
+		Command:             parseRunnerCommand(getenv("RUNNER_JOB_COMMAND")),
 		CommandByEvent:      eventCommandOverrides(getenv),
 		CommandByRepository: repositoryCommandOverrides(getenv("RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES")),
 		GitHubCommentMode:   githubCommentMode(getenv("NOVA_SRE_GITHUB_COMMENT_MODE")),
@@ -746,11 +746,23 @@ func (c JobConfig) commandForEvent(event string, repository string) []string {
 	return append([]string(nil), c.Command...)
 }
 
+func parseRunnerCommand(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	const shellPrefix = "/bin/sh -c "
+	if strings.HasPrefix(raw, shellPrefix) {
+		return []string{"/bin/sh", "-c", strings.TrimSpace(raw[len(shellPrefix):])}
+	}
+	return strings.Fields(raw)
+}
+
 func eventCommandOverrides(getenv func(string) string) map[string][]string {
 	overrides := map[string][]string{}
 	for _, event := range []string{"push", "pull_request", "workflow_run"} {
 		name := "RUNNER_JOB_COMMAND_" + strings.ToUpper(strings.ReplaceAll(event, "-", "_"))
-		command := strings.Fields(getenv(name))
+		command := parseRunnerCommand(getenv(name))
 		if len(command) > 0 {
 			overrides[event] = command
 		}
@@ -767,7 +779,7 @@ func repositoryCommandOverrides(raw string) map[string][]string {
 		if !ok {
 			continue
 		}
-		command := strings.Fields(commandText)
+		command := parseRunnerCommand(commandText)
 		if len(command) > 0 {
 			overrides[normalizeRepository(repository)] = command
 		}

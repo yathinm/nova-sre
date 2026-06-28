@@ -1093,11 +1093,18 @@ function githubCommentAction(item: ApiRecord) {
 }
 
 function hasCommentSignal(item: ApiRecord) {
-  return Boolean(
+  if (
     optionalText(item.github_comment_action, item.github_comment_url, item.github_comment_error) ||
-      typeof item.github_comment_posted === "boolean" ||
-      optionalText(item.status).includes("diagnosis_comment"),
-  );
+    typeof item.github_comment_posted === "boolean" ||
+    optionalText(item.status).includes("diagnosis_comment")
+  ) {
+    return true;
+  }
+  const status = optionalText(item.status).trim().toLowerCase();
+  if (status === "diagnosed" || status === "diagnosis_comment_error") {
+    return Boolean(githubCommentAction(item) || githubCommentURL(item));
+  }
+  return false;
 }
 
 function commentActionCounts(items: ApiRecord[]): Record<CommentAction, number> {

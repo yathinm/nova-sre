@@ -69,6 +69,15 @@ spec:
               value: upsert
             - name: RUNNER_JOB_TTL_SECONDS
               value: "900"
+            - name: RUNNER_JOB_IMAGE
+              value: golang:1.25-alpine
+            - name: RUNNER_JOB_MEMORY_REQUEST
+              value: "256Mi"
+            - name: RUNNER_JOB_MEMORY_LIMIT
+              value: "512Mi"
+            - name: RUNNER_JOB_COMMAND_PULL_REQUEST
+              value: >-
+                /bin/sh -c set -eu; apk add --no-cache git; git clone --filter=blob:none --no-checkout "https://github.com/${GITHUB_REPOSITORY}.git" /src; cd /src; git checkout "${GITHUB_SHA}"; cd server-go; go test ./...
             # Optional event-specific runner commands are supported through
             # RUNNER_JOB_COMMAND_PUSH, RUNNER_JOB_COMMAND_PULL_REQUEST, and
             # RUNNER_JOB_COMMAND_WORKFLOW_RUN.
