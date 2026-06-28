@@ -321,7 +321,16 @@ func (s *Server) validAPIToken(r *http.Request) bool {
 	if candidate == "" {
 		return false
 	}
-	return hmac.Equal([]byte(candidate), []byte(s.apiToken))
+	return secureCompareToken(candidate, s.apiToken)
+}
+
+func secureCompareToken(candidate string, expected string) bool {
+	if candidate == "" || expected == "" {
+		return false
+	}
+	candidateHash := sha256.Sum256([]byte(candidate))
+	expectedHash := sha256.Sum256([]byte(expected))
+	return hmac.Equal(candidateHash[:], expectedHash[:])
 }
 
 type kubernetesJobLister interface {
