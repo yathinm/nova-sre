@@ -58,6 +58,7 @@ type JobConfig struct {
 	SHA                string
 	Command            []string
 	CommandByEvent     map[string][]string
+	GitHubCommentMode  string
 	TTLSecondsFinished *int32
 	BackoffLimit       *int32
 	ServiceAccountName string
@@ -119,18 +120,19 @@ type PullRequestMetadata struct {
 }
 
 type DiagnoseRequest struct {
-	DeliveryID   string              `json:"delivery_id"`
-	Event        string              `json:"event"`
-	Repository   string              `json:"repository,omitempty"`
-	SHA          string              `json:"sha,omitempty"`
-	JobName      string              `json:"job_name"`
-	Namespace    string              `json:"namespace"`
-	Reason       string              `json:"reason,omitempty"`
-	Message      string              `json:"message,omitempty"`
-	PullRequest  PullRequestMetadata `json:"pull_request,omitempty"`
-	Logs         []LogEntry          `json:"logs"`
-	WebhookBody  json.RawMessage     `json:"webhook_body,omitempty"`
-	ObservedTime time.Time           `json:"observed_time"`
+	DeliveryID        string              `json:"delivery_id"`
+	Event             string              `json:"event"`
+	Repository        string              `json:"repository,omitempty"`
+	SHA               string              `json:"sha,omitempty"`
+	JobName           string              `json:"job_name"`
+	Namespace         string              `json:"namespace"`
+	Reason            string              `json:"reason,omitempty"`
+	Message           string              `json:"message,omitempty"`
+	PullRequest       PullRequestMetadata `json:"pull_request,omitempty"`
+	Logs              []LogEntry          `json:"logs"`
+	WebhookBody       json.RawMessage     `json:"webhook_body,omitempty"`
+	ObservedTime      time.Time           `json:"observed_time"`
+	GitHubCommentMode string              `json:"github_comment_mode,omitempty"`
 }
 
 type DiagnoseResponse struct {
@@ -491,18 +493,19 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 	}
 
 	request := DiagnoseRequest{
-		DeliveryID:   event.DeliveryID,
-		Event:        event.Type,
-		Repository:   metadata.Repo,
-		SHA:          metadata.SHA,
-		JobName:      job.Name,
-		Namespace:    job.Namespace,
-		Reason:       result.Reason,
-		Message:      result.Message,
-		PullRequest:  metadata.PullRequest,
-		Logs:         logs,
-		WebhookBody:  append(json.RawMessage(nil), event.Body...),
-		ObservedTime: r.now(),
+		DeliveryID:        event.DeliveryID,
+		Event:             event.Type,
+		Repository:        metadata.Repo,
+		SHA:               metadata.SHA,
+		JobName:           job.Name,
+		Namespace:         job.Namespace,
+		Reason:            result.Reason,
+		Message:           result.Message,
+		PullRequest:       metadata.PullRequest,
+		Logs:              logs,
+		WebhookBody:       append(json.RawMessage(nil), event.Body...),
+		ObservedTime:      r.now(),
+		GitHubCommentMode: r.Config.withDefaults(metadata).GitHubCommentMode,
 	}
 	diagnosis, err := r.Agent.Diagnose(ctx, request)
 	if err != nil {
@@ -596,6 +599,7 @@ func JobConfigFromEnv(getenv func(string) string) JobConfig {
 		SHA:                strings.TrimSpace(getenv("RUNNER_SHA")),
 		Command:            strings.Fields(getenv("RUNNER_JOB_COMMAND")),
 		CommandByEvent:     eventCommandOverrides(getenv),
+		GitHubCommentMode:  githubCommentMode(getenv("NOVA_SRE_GITHUB_COMMENT_MODE")),
 		TTLSecondsFinished: &ttl,
 		BackoffLimit:       &backoff,
 		ServiceAccountName: strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
@@ -716,6 +720,7 @@ func (c JobConfig) withDefaults(metadata payloadMetadata) JobConfig {
 	if c.CommandByEvent == nil {
 		c.CommandByEvent = map[string][]string{}
 	}
+	c.GitHubCommentMode = githubCommentMode(c.GitHubCommentMode)
 
 	return c
 }
@@ -740,6 +745,15 @@ func eventCommandOverrides(getenv func(string) string) map[string][]string {
 		}
 	}
 	return overrides
+}
+
+func githubCommentMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "create":
+		return "create"
+	default:
+		return "upsert"
+	}
 }
 
 func runnerResourceRequirements(getenv func(string) string) corev1.ResourceRequirements {

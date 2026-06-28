@@ -638,6 +638,7 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 		RunnerNamespace:      "runner-jobs",
 		RunnerImage:          "nova-sre-runner:local",
 		RunnerJobTTLSeconds:  900,
+		GitHubCommentMode:    "create",
 	})
 	server.SetAPIToken("control-panel-token")
 	server.SetAPIAllowedOrigins("https://panel.example.com")
@@ -671,6 +672,9 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 	}
 	if config.RunnerNamespace != "runner-jobs" || config.RunnerImage != "nova-sre-runner:local" {
 		t.Fatalf("unexpected runner config: %#v", config)
+	}
+	if config.GitHubCommentMode != "create" {
+		t.Fatalf("expected GitHub comment mode create, got %#v", config)
 	}
 	if strings.Contains(rec.Body.String(), "webhook-secret") ||
 		strings.Contains(rec.Body.String(), "control-panel-token") ||

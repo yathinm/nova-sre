@@ -18,6 +18,7 @@ const checks = [
   ["delivery plural copy", 'summaryDetail(events, "delivery", "deliveries")'],
   ["runtime cors status", "api_cors_restricted"],
   ["runtime agent auth status", "agent_auth_enabled"],
+  ["runtime comment mode status", "github_comment_mode"],
 ];
 
 const failures = checks
