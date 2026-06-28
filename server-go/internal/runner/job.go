@@ -663,13 +663,7 @@ func BuildGitHubEventJob(config JobConfig, event Event) (*batchv1.Job, error) {
 		Image:     config.Image,
 		Command:   append([]string(nil), config.Command...),
 		Resources: *config.Resources.DeepCopy(),
-		Env: []corev1.EnvVar{
-			{Name: "GITHUB_EVENT_NAME", Value: event.Type},
-			{Name: "GITHUB_DELIVERY_ID", Value: event.DeliveryID},
-			{Name: "GITHUB_REPOSITORY", Value: config.Repo},
-			{Name: "GITHUB_SHA", Value: config.SHA},
-			{Name: "GITHUB_EVENT_PAYLOAD", Value: string(event.Body)},
-		},
+		Env:       githubContextEnv(event, config, metadata),
 	}
 
 	return &batchv1.Job{
@@ -752,12 +746,28 @@ func resourceQuantity(raw string, fallback string) resource.Quantity {
 type payloadMetadata struct {
 	Repo        string
 	SHA         string
+	Action      string
+	Ref         string
+	Before      string
 	PullRequest PullRequestMetadata
+	WorkflowRun WorkflowRunMetadata
 	EventTime   time.Time
+}
+
+type WorkflowRunMetadata struct {
+	ID         int64
+	Name       string
+	URL        string
+	Status     string
+	Conclusion string
+	Attempt    int
 }
 
 func githubPayloadMetadata(body []byte) payloadMetadata {
 	var payload struct {
+		Action     string `json:"action"`
+		Ref        string `json:"ref"`
+		Before     string `json:"before"`
 		After      string `json:"after"`
 		HeadCommit struct {
 			ID        string `json:"id"`
@@ -783,6 +793,12 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			} `json:"base"`
 		} `json:"pull_request"`
 		WorkflowRun struct {
+			ID           int64  `json:"id"`
+			Name         string `json:"name"`
+			HTMLURL      string `json:"html_url"`
+			Status       string `json:"status"`
+			Conclusion   string `json:"conclusion"`
+			RunAttempt   int    `json:"run_attempt"`
 			HeadSHA      string `json:"head_sha"`
 			CreatedAt    string `json:"created_at"`
 			UpdatedAt    string `json:"updated_at"`
@@ -803,13 +819,24 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 	}
 
 	return payloadMetadata{
-		Repo: firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName),
-		SHA:  firstNonEmpty(payload.HeadCommit.ID, payload.After, payload.PullRequest.Head.SHA, payload.WorkflowRun.HeadSHA),
+		Repo:   firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName),
+		SHA:    firstNonEmpty(payload.HeadCommit.ID, payload.After, payload.PullRequest.Head.SHA, payload.WorkflowRun.HeadSHA),
+		Action: payload.Action,
+		Ref:    payload.Ref,
+		Before: payload.Before,
 		PullRequest: PullRequestMetadata{
 			Number: payload.PullRequest.Number,
 			URL:    payload.PullRequest.HTMLURL,
 			Head:   payload.PullRequest.Head.Ref,
 			Base:   payload.PullRequest.Base.Ref,
+		},
+		WorkflowRun: WorkflowRunMetadata{
+			ID:         payload.WorkflowRun.ID,
+			Name:       payload.WorkflowRun.Name,
+			URL:        payload.WorkflowRun.HTMLURL,
+			Status:     payload.WorkflowRun.Status,
+			Conclusion: payload.WorkflowRun.Conclusion,
+			Attempt:    payload.WorkflowRun.RunAttempt,
 		},
 		EventTime: firstTime(
 			payload.WorkflowRun.RunStartedAt,
@@ -824,6 +851,44 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			payload.CheckRun.CompletedAt,
 		),
 	}
+}
+
+func githubContextEnv(event Event, config JobConfig, metadata payloadMetadata) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{Name: "GITHUB_EVENT_NAME", Value: event.Type},
+		{Name: "GITHUB_DELIVERY_ID", Value: event.DeliveryID},
+		{Name: "GITHUB_REPOSITORY", Value: config.Repo},
+		{Name: "GITHUB_SHA", Value: config.SHA},
+		{Name: "GITHUB_EVENT_PAYLOAD", Value: string(event.Body)},
+	}
+	env = appendOptionalEnv(env, "GITHUB_ACTION", metadata.Action)
+	env = appendOptionalEnv(env, "GITHUB_REF", metadata.Ref)
+	env = appendOptionalEnv(env, "GITHUB_BEFORE", metadata.Before)
+	if metadata.PullRequest.Number > 0 {
+		env = appendOptionalEnv(env, "GITHUB_PR_NUMBER", strconv.Itoa(metadata.PullRequest.Number))
+	}
+	env = appendOptionalEnv(env, "GITHUB_PR_URL", metadata.PullRequest.URL)
+	env = appendOptionalEnv(env, "GITHUB_HEAD_REF", metadata.PullRequest.Head)
+	env = appendOptionalEnv(env, "GITHUB_BASE_REF", metadata.PullRequest.Base)
+	if metadata.WorkflowRun.ID > 0 {
+		env = appendOptionalEnv(env, "GITHUB_WORKFLOW_RUN_ID", strconv.FormatInt(metadata.WorkflowRun.ID, 10))
+	}
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_NAME", metadata.WorkflowRun.Name)
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_RUN_URL", metadata.WorkflowRun.URL)
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_STATUS", metadata.WorkflowRun.Status)
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_CONCLUSION", metadata.WorkflowRun.Conclusion)
+	if metadata.WorkflowRun.Attempt > 0 {
+		env = appendOptionalEnv(env, "GITHUB_WORKFLOW_RUN_ATTEMPT", strconv.Itoa(metadata.WorkflowRun.Attempt))
+	}
+	return env
+}
+
+func appendOptionalEnv(env []corev1.EnvVar, name string, value string) []corev1.EnvVar {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return env
+	}
+	return append(env, corev1.EnvVar{Name: name, Value: value})
 }
 
 func jobResult(job *batchv1.Job) (JobResult, bool) {

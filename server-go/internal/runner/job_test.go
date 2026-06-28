@@ -32,7 +32,7 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	}, Event{
 		DeliveryID: "delivery-123",
 		Type:       "push",
-		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef1234567890"}`),
+		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"ref":"refs/heads/main","before":"0000000000000000","after":"abcdef1234567890"}`),
 		ReceivedAt: receivedAt,
 	})
 	if err != nil {
@@ -90,7 +90,9 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	assertEnv(t, container.Env, "GITHUB_DELIVERY_ID", "delivery-123")
 	assertEnv(t, container.Env, "GITHUB_REPOSITORY", "acme/widgets")
 	assertEnv(t, container.Env, "GITHUB_SHA", "abcdef1234567890")
-	assertEnv(t, container.Env, "GITHUB_EVENT_PAYLOAD", `{"repository":{"full_name":"acme/widgets"},"after":"abcdef1234567890"}`)
+	assertEnv(t, container.Env, "GITHUB_REF", "refs/heads/main")
+	assertEnv(t, container.Env, "GITHUB_BEFORE", "0000000000000000")
+	assertEnv(t, container.Env, "GITHUB_EVENT_PAYLOAD", `{"repository":{"full_name":"acme/widgets"},"ref":"refs/heads/main","before":"0000000000000000","after":"abcdef1234567890"}`)
 
 	if job.Labels["nova-sre.io/event"] != "push" {
 		t.Fatalf("expected event label push, got %q", job.Labels["nova-sre.io/event"])
@@ -113,10 +115,17 @@ func TestBuildGitHubEventJobExtractsPullRequestMetadata(t *testing.T) {
 		DeliveryID: "delivery-123",
 		Type:       "pull_request",
 		Body: []byte(`{
+			"action": "opened",
 			"pull_request": {
+				"number": 42,
+				"html_url": "https://github.com/acme/pr-source/pull/42",
 				"head": {
 					"sha": "0123456789abcdef",
+					"ref": "feature/context",
 					"repo": {"full_name": "acme/pr-source"}
+				},
+				"base": {
+					"ref": "main"
 				}
 			}
 		}`),
@@ -127,6 +136,11 @@ func TestBuildGitHubEventJobExtractsPullRequestMetadata(t *testing.T) {
 
 	assertContainerEnv(t, job, "GITHUB_REPOSITORY", "acme/pr-source")
 	assertContainerEnv(t, job, "GITHUB_SHA", "0123456789abcdef")
+	assertContainerEnv(t, job, "GITHUB_ACTION", "opened")
+	assertContainerEnv(t, job, "GITHUB_PR_NUMBER", "42")
+	assertContainerEnv(t, job, "GITHUB_PR_URL", "https://github.com/acme/pr-source/pull/42")
+	assertContainerEnv(t, job, "GITHUB_HEAD_REF", "feature/context")
+	assertContainerEnv(t, job, "GITHUB_BASE_REF", "main")
 	if job.Namespace != defaultNamespace {
 		t.Fatalf("expected default namespace %q, got %q", defaultNamespace, job.Namespace)
 	}
@@ -217,7 +231,19 @@ func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	if err := runner.EnqueueGitHubEvent(context.Background(), Event{
 		DeliveryID: "delivery-123",
 		Type:       "workflow_run",
-		Body:       []byte(`{"workflow_run":{"head_sha":"abc","repository":{"full_name":"acme/widgets"}}}`),
+		Body: []byte(`{
+			"action": "completed",
+			"workflow_run": {
+				"id": 123456,
+				"name": "CI",
+				"html_url": "https://github.com/acme/widgets/actions/runs/123456",
+				"status": "completed",
+				"conclusion": "failure",
+				"run_attempt": 2,
+				"head_sha": "abc",
+				"repository": {"full_name": "acme/widgets"}
+			}
+		}`),
 	}); err != nil {
 		t.Fatalf("EnqueueGitHubEvent returned error: %v", err)
 	}
@@ -227,6 +253,13 @@ func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	}
 	assertContainerEnv(t, creator.created, "GITHUB_REPOSITORY", "acme/widgets")
 	assertContainerEnv(t, creator.created, "GITHUB_SHA", "abc")
+	assertContainerEnv(t, creator.created, "GITHUB_ACTION", "completed")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_RUN_ID", "123456")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_NAME", "CI")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_RUN_URL", "https://github.com/acme/widgets/actions/runs/123456")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_STATUS", "completed")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_CONCLUSION", "failure")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_RUN_ATTEMPT", "2")
 }
 
 func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
