@@ -33,6 +33,8 @@ spec:
                   key: GITHUB_TOKEN
             - name: NOVA_SRE_AGENT_URL
               value: http://nova-sre-agent.nova-sre.svc.cluster.local:8000
+            - name: RUNNER_JOB_TTL_SECONDS
+              value: "900"
           ports:
             - containerPort: 8080
           readinessProbe:

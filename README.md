@@ -107,7 +107,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    the Go server, the Python agent, the frontend control panel, and the service
    account/RBAC needed for the Go server to create Jobs and read pod logs. The
    target restarts the app deployments after apply so pods pick up freshly built
-   local `:local` images.
+   local `:local` images. Local runner Jobs are retained for 15 minutes after
+   completion so you have time to inspect logs without letting completed Jobs
+   accumulate indefinitely.
 
 7. Expose the Go server locally after its Kubernetes Service exists:
 
