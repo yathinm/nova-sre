@@ -2,7 +2,7 @@ PROFILE=nova-sre
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-apply tf-destroy docker-env docker-build deploy-apps \
-        port-forward-server port-forward-agent port-forward-prometheus port-forward-grafana \
+        port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
         validate-metrics all-local test-go lint-go test-agent lint-agent
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
@@ -49,6 +49,7 @@ docker-env: ## Print eval command to point Docker CLI at Minikube's daemon
 docker-build: ## Build images directly inside Minikube's Docker daemon
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-server:local ./server-go
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-agent:local ./agent-python
+	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-frontend:local ./frontend
 
 # ── Kubernetes ────────────────────────────────────────────────────────────────
 
@@ -63,6 +64,9 @@ port-forward-server: ## Forward Go server → localhost:8080
 
 port-forward-agent: ## Forward Python agent → localhost:8000
 	kubectl port-forward -n nova-sre svc/nova-sre-agent 8000:8000
+
+port-forward-frontend: ## Forward frontend control panel → localhost:8081
+	kubectl port-forward -n nova-sre svc/nova-sre-frontend 8081:80
 
 port-forward-prometheus: ## Forward Prometheus → localhost:9090
 	kubectl port-forward -n observability svc/prometheus-server 9090:80
