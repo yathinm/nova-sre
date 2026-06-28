@@ -36,6 +36,15 @@ type ListState<T> = {
 type ListResult = Omit<ListState<ApiRecord>, "updatedAt">;
 type ApiRecord = Record<string, unknown>;
 type ApiError = Error & { status?: number };
+type ActivitySummaryState = {
+  total: number;
+  byStatus: Record<string, number>;
+  byEvent: Record<string, number>;
+  source: string;
+  message: string;
+  status: LoadStatus;
+  updatedAt: number | null;
+};
 type RuntimeConfig = {
   activity_limit?: number;
   delivery_cache_ttl?: string;
@@ -83,6 +92,15 @@ function App() {
     status: "idle",
     updatedAt: null,
   });
+  const [activitySummary, setActivitySummary] = useState<ActivitySummaryState>({
+    total: 0,
+    byStatus: {},
+    byEvent: {},
+    source: "No endpoint",
+    message: "",
+    status: "idle",
+    updatedAt: null,
+  });
 
   const client = useMemo(() => createClient(apiBase, apiToken), [apiBase, apiToken]);
 
@@ -99,17 +117,28 @@ function App() {
     setRefreshing(true);
     setEvents((current) => ({ ...current, message: "Loading recent webhook deliveries...", status: "loading" }));
     setJobs((current) => ({ ...current, message: "Loading runner job observations...", status: "loading" }));
+    setActivitySummary((current) => ({ ...current, message: "Loading activity summary...", status: "loading" }));
 
     try {
-      const [healthOk, , , eventList, jobList] = await Promise.all([
+      const [healthOk, , , summary, eventList, jobList] = await Promise.all([
         loadHealth(client, setHealthCard),
         loadMetrics(client, setMetricsCard),
         loadRuntimeConfig(client, setRuntimeCard),
+        loadActivitySummary(client),
         loadList(client, "events", ENDPOINTS.events),
         loadList(client, "jobs", ENDPOINTS.jobs),
       ]);
       const refreshedAt = Date.now();
 
+      setActivitySummary({
+        total: summary.total,
+        byStatus: summary.byStatus,
+        byEvent: summary.byEvent,
+        source: summary.source,
+        message: summary.message,
+        status: summary.status,
+        updatedAt: summary.updatedAt || refreshedAt,
+      });
       setEvents({
         items: eventList.items,
         source: eventList.source,
@@ -207,6 +236,14 @@ function App() {
         <SummaryCard card={runtimeCard} />
         <SummaryCard
           card={{
+            label: "Pipeline Total",
+            value: String(activitySummary.total),
+            detail: summaryCardDetail(activitySummary),
+            tone: toneForSummary(activitySummary),
+          }}
+        />
+        <SummaryCard
+          card={{
             label: "Recent Events",
             value: String(events.items.length),
             detail: summaryDetail(events, "delivery", "deliveries"),
@@ -224,6 +261,7 @@ function App() {
       </section>
 
       <section className="content-grid">
+        <BreakdownPanel summary={activitySummary} />
         <DataPanel
           eyebrow="GitHub Webhooks"
           title="Recent Events"
@@ -260,6 +298,56 @@ function App() {
         />
       </section>
     </main>
+  );
+}
+
+function BreakdownPanel({ summary }: { summary: ActivitySummaryState }) {
+  return (
+    <section className="panel breakdown-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Activity Summary</p>
+          <h2>Status Breakdown</h2>
+        </div>
+        <div className="panel-meta">
+          <span className="source-label">{summary.source}</span>
+          {summary.updatedAt ? (
+            <time dateTime={new Date(summary.updatedAt).toISOString()}>{formatTime(summary.updatedAt, "time")}</time>
+          ) : null}
+        </div>
+      </div>
+      {summary.message ? (
+        <div className={`state ${summary.status === "error" ? "error" : summary.status === "loading" ? "loading" : "empty"}`}>
+          <strong>{summary.status === "error" ? "Summary unavailable" : titleCase(summary.status)}</strong>
+          <span>{summary.message}</span>
+        </div>
+      ) : null}
+      <div className="breakdown-grid">
+        <BreakdownList title="By Status" entries={summary.byStatus} />
+        <BreakdownList title="By Event" entries={summary.byEvent} />
+      </div>
+    </section>
+  );
+}
+
+function BreakdownList({ title, entries }: { title: string; entries: Record<string, number> }) {
+  const rows = sortedCountEntries(entries);
+  return (
+    <div className="breakdown-list">
+      <h3>{title}</h3>
+      {rows.length ? (
+        <ul>
+          {rows.map(([label, count]) => (
+            <li key={label}>
+              <span>{statusLabel(label)}</span>
+              <strong>{count}</strong>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>No activity yet</p>
+      )}
+    </div>
   );
 }
 
@@ -484,6 +572,44 @@ async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCar
   }
 }
 
+async function loadActivitySummary(client: ReturnType<typeof createClient>): Promise<ActivitySummaryState> {
+  try {
+    const payload = await client.json("/api/summary");
+    const summary = normalizeActivitySummary(payload);
+    return {
+      total: summary.total,
+      byStatus: summary.byStatus,
+      byEvent: summary.byEvent,
+      source: "/api/summary",
+      message: summary.total ? "" : "No webhook activity has been summarized yet.",
+      status: summary.total ? "ready" : "empty",
+      updatedAt: summary.updatedAt,
+    };
+  } catch (error) {
+    return {
+      total: 0,
+      byStatus: {},
+      byEvent: {},
+      source: "/api/summary",
+      message: `Could not load summary: ${describeFetchError(error)}`,
+      status: "error",
+      updatedAt: null,
+    };
+  }
+}
+
+function normalizeActivitySummary(payload: unknown) {
+  if (!isRecord(payload)) {
+    return { total: 0, byStatus: {}, byEvent: {}, updatedAt: null };
+  }
+  return {
+    total: numericValue(payload.total),
+    byStatus: normalizeCountMap(payload.by_status),
+    byEvent: normalizeCountMap(payload.by_event),
+    updatedAt: parseDate(textValue(payload.updated_at, ""))?.getTime() || null,
+  };
+}
+
 function parseMetricFamilies(metricsText: string) {
   const names = new Set<string>();
   metricsText.split("\n").forEach((line) => {
@@ -590,6 +716,30 @@ function toneForList(list: ListState<ApiRecord>): Tone {
   return "warn";
 }
 
+function toneForSummary(summary: ActivitySummaryState): Tone {
+  if (summary.status === "error") {
+    return "error";
+  }
+  if (summary.total > 0) {
+    return "ok";
+  }
+  return "warn";
+}
+
+function summaryCardDetail(summary: ActivitySummaryState) {
+  if (summary.status === "loading") {
+    return "Refreshing from /api/summary";
+  }
+  if (summary.status === "error") {
+    return summary.message || "Could not load summary";
+  }
+  if (!summary.total) {
+    return "No summarized pipeline activity yet";
+  }
+  const topStatus = sortedCountEntries(summary.byStatus)[0];
+  return topStatus ? `${topStatus[1]} ${statusLabel(topStatus[0]).toLowerCase()} in recent activity` : `${summary.total} summarized records`;
+}
+
 function summaryDetail(list: ListState<ApiRecord>, singular: string, plural: string) {
   if (list.status === "loading") {
     return "Refreshing from API";
@@ -601,6 +751,25 @@ function summaryDetail(list: ListState<ApiRecord>, singular: string, plural: str
     return `${list.items.length} recent ${list.items.length === 1 ? singular : plural} loaded`;
   }
   return `No recent ${plural}`;
+}
+
+function normalizeCountMap(value: unknown) {
+  if (!isRecord(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, count]) => [key, numericValue(count)] as const)
+      .filter(([, count]) => count > 0),
+  );
+}
+
+function sortedCountEntries(entries: Record<string, number>) {
+  return Object.entries(entries).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function numericValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function parseDate(value: string) {
