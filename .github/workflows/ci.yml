@@ -26,6 +26,7 @@ jobs:
       agent-python: ${{ steps.filter.outputs.agent-python }}
       frontend: ${{ steps.filter.outputs.frontend }}
       k8s: ${{ steps.filter.outputs.k8s }}
+      terraform: ${{ steps.filter.outputs.terraform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,6 +50,11 @@ jobs:
             k8s:
               - '.github/workflows/ci.yml'
               - 'k8s/**'
+              - 'Makefile'
+            terraform:
+              - '.github/workflows/ci.yml'
+              - 'terraform/**'
+              - 'dashboards/**'
               - 'Makefile'
 
   server-go:
@@ -139,3 +145,20 @@ jobs:
 
       - name: Validate manifests
         run: make KUBECTL_VALIDATE=false validate-k8s
+
+  terraform:
+    name: Terraform validation
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Validate Terraform
+        run: make tf-validate

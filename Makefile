@@ -3,7 +3,7 @@ PYTHON ?= python3
 KUBECTL_VALIDATE ?= true
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
-        tf-init tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
+        tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
         validate-metrics validate-api-cors validate-k8s run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
@@ -36,6 +36,11 @@ dashboard: ## Open Minikube dashboard
 
 tf-init: ## Initialise Terraform
 	cd terraform && terraform init
+
+tf-validate: ## Validate Terraform formatting and configuration
+	cd terraform && terraform fmt -check
+	cd terraform && terraform init -backend=false
+	cd terraform && terraform validate
 
 tf-plan: ## Preview Terraform changes
 	cd terraform && terraform plan
