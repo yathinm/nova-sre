@@ -77,8 +77,8 @@ docker-build-ci: ## Build images with the active Docker daemon for CI validation
 # ── Kubernetes ────────────────────────────────────────────────────────────────
 
 deploy-apps: ## Apply RBAC and base manifests
-	kubectl apply -f k8s/rbac/
-	kubectl apply -f k8s/base/
+	kubectl apply -k k8s/rbac
+	kubectl apply -k k8s/base
 	kubectl rollout restart deployment/nova-sre-server deployment/nova-sre-agent deployment/nova-sre-frontend -n nova-sre
 	kubectl rollout status deployment/nova-sre-server -n nova-sre --timeout=120s
 	kubectl rollout status deployment/nova-sre-agent -n nova-sre --timeout=120s
@@ -114,7 +114,9 @@ validate-k8s: ## Validate Kubernetes app manifests client-side
 ifeq ($(KUBECTL_VALIDATE),false)
 	ruby scripts/validate-k8s-yaml.rb
 else
-	kubectl apply --dry-run=client --validate=true -f k8s/base -f k8s/rbac
+	kubectl apply --dry-run=client --validate=true -k k8s/rbac
+	kubectl apply --dry-run=client --validate=true -k k8s/base
+	kubectl apply --dry-run=client --validate=true -k k8s/overlays/production
 endif
 
 validate-scripts: ## Validate repository Ruby helper scripts

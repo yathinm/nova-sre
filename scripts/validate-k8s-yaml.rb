@@ -3,7 +3,7 @@
 
 require "yaml"
 
-paths = Dir["k8s/{base,rbac}/**/*.yaml"].sort
+paths = Dir["k8s/{base,rbac,overlays}/**/*.yaml"].sort
 abort("no Kubernetes YAML files found") if paths.empty?
 
 errors = []
@@ -26,7 +26,8 @@ paths.each do |path|
 
     errors << "#{path}:#{index + 1}: missing apiVersion" if api_version.empty?
     errors << "#{path}:#{index + 1}: missing kind" if kind.empty?
-    errors << "#{path}:#{index + 1}: missing metadata.name" if name.empty?
+    requires_metadata_name = kind != "Kustomization"
+    errors << "#{path}:#{index + 1}: missing metadata.name" if requires_metadata_name && name.empty?
   rescue Psych::SyntaxError => error
     errors << "#{path}: YAML syntax error: #{error.message}"
   end
