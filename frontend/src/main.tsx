@@ -1,4 +1,4 @@
-import { StrictMode, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { StrictMode, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -13,8 +13,10 @@ const ENDPOINTS = {
   events: ["/api/events", "/events"],
   jobs: ["/api/jobs", "/jobs"],
 } as const;
+const AUTO_REFRESH_MS = 30_000;
 
 type Tone = "ok" | "warn" | "error";
+type LoadStatus = "idle" | "loading" | "ready" | "empty" | "error";
 type CardState = {
   label: string;
   value: string;
@@ -26,7 +28,10 @@ type ListState<T> = {
   items: T[];
   source: string;
   message: string;
+  status: LoadStatus;
+  updatedAt: number | null;
 };
+type ListResult = Omit<ListState<ApiRecord>, "updatedAt">;
 type ApiRecord = Record<string, unknown>;
 type ApiError = Error & { status?: number };
 
@@ -34,6 +39,9 @@ function App() {
   const [apiBase, setApiBase] = useState(initialApiBase);
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+  const isRefreshingRef = useRef(false);
   const [healthCard, setHealthCard] = useState<CardState>({
     label: "API Health",
     value: "Checking",
@@ -48,52 +56,80 @@ function App() {
     items: [],
     source: "No endpoint",
     message: "",
+    status: "idle",
+    updatedAt: null,
   });
   const [jobs, setJobs] = useState<ListState<ApiRecord>>({
     items: [],
     source: "No endpoint",
     message: "",
+    status: "idle",
+    updatedAt: null,
   });
 
   const client = useMemo(() => createClient(apiBase), [apiBase]);
 
   const refresh = useCallback(async () => {
+    if (isRefreshingRef.current) {
+      return;
+    }
+    isRefreshingRef.current = true;
     const nextApiBase = trimTrailingSlash(apiBase || DEFAULT_API_BASE);
     setApiBase(nextApiBase);
     window.localStorage.setItem("novaSreApiBase", nextApiBase);
     setNotice("");
     setRefreshing(true);
-    setEvents((current) => ({ ...current, message: "Loading events..." }));
-    setJobs((current) => ({ ...current, message: "Loading jobs..." }));
+    setEvents((current) => ({ ...current, message: "Loading recent webhook deliveries...", status: "loading" }));
+    setJobs((current) => ({ ...current, message: "Loading runner job observations...", status: "loading" }));
 
-    const [healthOk, , eventList, jobList] = await Promise.all([
-      loadHealth(client, setHealthCard),
-      loadMetrics(client, setMetricsCard),
-      loadList(client, "events", ENDPOINTS.events),
-      loadList(client, "jobs", ENDPOINTS.jobs),
-    ]);
+    try {
+      const [healthOk, , eventList, jobList] = await Promise.all([
+        loadHealth(client, setHealthCard),
+        loadMetrics(client, setMetricsCard),
+        loadList(client, "events", ENDPOINTS.events),
+        loadList(client, "jobs", ENDPOINTS.jobs),
+      ]);
+      const refreshedAt = Date.now();
 
-    setEvents({
-      items: eventList.items,
-      source: eventList.source,
-      message: eventList.message || (eventList.items.length ? "" : "No webhook events to show."),
-    });
-    setJobs({
-      items: jobList.items,
-      source: jobList.source,
-      message: jobList.message || (jobList.items.length ? "" : "No runner jobs to show."),
-    });
-    if (!healthOk) {
-      setNotice("The browser could not reach the Go API. Confirm the server is running, the API base is correct, and CORS allows this frontend origin.");
+      setEvents({
+        items: eventList.items,
+        source: eventList.source,
+        message: eventList.message || (eventList.items.length ? "" : "No webhook deliveries have been observed yet."),
+        status: eventList.status,
+        updatedAt: refreshedAt,
+      });
+      setJobs({
+        items: jobList.items,
+        source: jobList.source,
+        message: jobList.message || (jobList.items.length ? "" : "No runner job observations have been reported yet."),
+        status: jobList.status,
+        updatedAt: refreshedAt,
+      });
+      setLastRefreshAt(refreshedAt);
+      if (!healthOk) {
+        setNotice("The browser could not reach the Go API. Confirm the server is running, the API base is correct, and CORS allows this frontend origin.");
+      }
+    } finally {
+      setRefreshing(false);
+      isRefreshingRef.current = false;
     }
-    setRefreshing(false);
   }, [apiBase, client]);
 
   useEffect(() => {
     void refresh();
-    // Run the initial load once; later refreshes are user driven.
+    // Run the initial load once; auto-refresh is scheduled separately.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (paused) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      void refresh();
+    }, AUTO_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [paused, refresh]);
 
   return (
     <main className="shell">
@@ -101,6 +137,7 @@ function App() {
         <div>
           <p className="eyebrow">Nova-SRE</p>
           <h1>Control Panel</h1>
+          <p className="subtitle">Live signal from webhook ingestion and Kubernetes runner activity.</p>
         </div>
         <form
           className="api-control"
@@ -123,6 +160,13 @@ function App() {
               {refreshing ? "..." : "↻"}
             </button>
           </div>
+          <div className="refresh-row">
+            <span>{lastRefreshAt ? `Updated ${formatTime(lastRefreshAt, "time")}` : "Waiting for first refresh"}</span>
+            <label className="pause-toggle">
+              <input type="checkbox" checked={paused} onChange={(event) => setPaused(event.target.checked)} />
+              Pause auto-refresh
+            </label>
+          </div>
         </form>
       </header>
 
@@ -135,16 +179,16 @@ function App() {
           card={{
             label: "Recent Events",
             value: String(events.items.length),
-            detail: events.items.length ? "Loaded from API" : "No recent events",
-            tone: events.items.length ? "ok" : "warn",
+            detail: summaryDetail(events, "delivery"),
+            tone: toneForList(events),
           }}
         />
         <SummaryCard
           card={{
             label: "Recent Jobs",
             value: String(jobs.items.length),
-            detail: jobs.items.length ? "Loaded from API" : "No recent jobs",
-            tone: jobs.items.length ? "ok" : "warn",
+            detail: summaryDetail(jobs, "job"),
+            tone: toneForList(jobs),
           }}
         />
       </section>
@@ -155,12 +199,15 @@ function App() {
           title="Recent Events"
           source={events.source}
           message={events.message}
+          status={events.status}
+          updatedAt={events.updatedAt}
+          emptyTitle="No events yet"
           headers={["Delivery", "Event", "Repository", "Received", "Status"]}
           rows={events.items.slice(0, 20).map((item) => [
-            textValue(item.delivery_id, item.deliveryID, item.id),
-            textValue(item.event, item.type),
-            repositoryName(item),
-            formatTime(textValue(item.received_at, item.receivedAt, item.created_at, item.createdAt, item.observed_time, "")),
+            <CodeValue key="delivery" value={textValue(item.delivery_id, item.deliveryID, item.id)} />,
+            <strong key="event">{textValue(item.event, item.type)}</strong>,
+            <span key="repo" className="truncate-value">{repositoryName(item)}</span>,
+            <TimeValue key="received" value={textValue(item.received_at, item.receivedAt, item.created_at, item.createdAt, item.observed_time, "")} />,
             <StatusPill key="status" value={textValue(item.status, item.result, "accepted")} />,
           ])}
         />
@@ -169,12 +216,15 @@ function App() {
           title="Recent Jobs"
           source={jobs.source}
           message={jobs.message}
+          status={jobs.status}
+          updatedAt={jobs.updatedAt}
+          emptyTitle="No jobs yet"
           headers={["Job", "Namespace", "Event", "Observed", "Result"]}
           rows={jobs.items.slice(0, 20).map((item) => [
-            textValue(item.job_name, item.jobName, item.name),
-            textValue(item.namespace, "nova-sre"),
-            textValue(item.event, item.type),
-            formatTime(textValue(item.observed_time, item.observedTime, item.created_at, item.createdAt, item.completed_at, "")),
+            <CodeValue key="job" value={textValue(item.job_name, item.jobName, item.name)} />,
+            <CodeValue key="namespace" value={textValue(item.namespace, "nova-sre")} />,
+            <strong key="event">{textValue(item.event, item.type)}</strong>,
+            <TimeValue key="observed" value={textValue(item.observed_time, item.observedTime, item.created_at, item.createdAt, item.completed_at, "")} />,
             <StatusPill key="status" value={textValue(item.status, item.result, resultFromBooleans(item))} />,
           ])}
         />
@@ -198,6 +248,9 @@ function DataPanel({
   title,
   source,
   message,
+  status,
+  updatedAt,
+  emptyTitle,
   headers,
   rows,
 }: {
@@ -205,9 +258,15 @@ function DataPanel({
   title: string;
   source: string;
   message: string;
+  status: LoadStatus;
+  updatedAt: number | null;
+  emptyTitle: string;
   headers: string[];
   rows: Array<Array<string | ReactNode>>;
 }) {
+  const showTable = rows.length > 0;
+  const stateTone = status === "error" ? "error" : status === "loading" ? "loading" : "empty";
+
   return (
     <section className="panel">
       <div className="panel-heading">
@@ -215,36 +274,65 @@ function DataPanel({
           <p className="eyebrow">{eyebrow}</p>
           <h2>{title}</h2>
         </div>
-        <span className="source-label">{source}</span>
+        <div className="panel-meta">
+          <span className="source-label">{source}</span>
+          {updatedAt ? <time dateTime={new Date(updatedAt).toISOString()}>{formatTime(updatedAt, "time")}</time> : null}
+        </div>
       </div>
-      {message ? <div className="state">{message}</div> : null}
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              {headers.map((header) => (
-                <th key={header}>{header}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, rowIndex) => (
-              <tr key={`${title}-${rowIndex}`}>
-                {row.map((cell, cellIndex) => (
-                  <td key={`${title}-${rowIndex}-${cellIndex}`}>{cell}</td>
+      {message ? (
+        <div className={`state ${stateTone}`}>
+          <strong>{status === "empty" ? emptyTitle : titleCase(status)}</strong>
+          <span>{message}</span>
+        </div>
+      ) : null}
+      {showTable ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {headers.map((header) => (
+                  <th key={header}>{header}</th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`${title}-${rowIndex}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={`${title}-${rowIndex}-${cellIndex}`} data-label={headers[cellIndex]}>
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function StatusPill({ value }: { value: string }) {
-  const normalized = value.toLowerCase();
-  return <span className={`pill ${toneForStatus(normalized)}`}>{normalized}</span>;
+  const normalized = value.trim().toLowerCase();
+  return <span className={`pill ${toneForStatus(normalized)}`}>{statusLabel(normalized)}</span>;
+}
+
+function CodeValue({ value }: { value: string }) {
+  return <code className="code-value">{value}</code>;
+}
+
+function TimeValue({ value }: { value: string }) {
+  const date = parseDate(value);
+  if (!date) {
+    return <span className="muted-value">{value || "Unknown"}</span>;
+  }
+  return (
+    <time className="time-value" dateTime={date.toISOString()} title={formatTime(date.getTime(), "full")}>
+      <span>{formatTime(date.getTime(), "compact")}</span>
+      <small>{relativeTime(date.getTime())}</small>
+    </time>
+  );
 }
 
 function initialApiBase() {
@@ -341,11 +429,12 @@ function parseMetricFamilies(metricsText: string) {
   return Array.from(names).sort();
 }
 
-async function loadList(client: ReturnType<typeof createClient>, kind: ListKind, paths: readonly string[]) {
+async function loadList(client: ReturnType<typeof createClient>, kind: ListKind, paths: readonly string[]): Promise<ListResult> {
   for (const path of paths) {
     try {
       const payload = await client.json(path);
-      return { items: normalizeList(payload), source: path, message: "" };
+      const items = normalizeList(payload);
+      return { items, source: path, message: "", status: items.length ? "ready" : "empty" };
     } catch (error) {
       const apiError = error as ApiError;
       if (apiError.status && apiError.status !== 404) {
@@ -353,6 +442,7 @@ async function loadList(client: ReturnType<typeof createClient>, kind: ListKind,
           items: [],
           source: path,
           message: `Could not load ${kind}: ${describeFetchError(error)}`,
+          status: "error" as const,
         };
       }
     }
@@ -362,6 +452,7 @@ async function loadList(client: ReturnType<typeof createClient>, kind: ListKind,
     items: [],
     source: "Not implemented",
     message: `${titleCase(kind)} are not exposed by the Go API yet.`,
+    status: "error" as const,
   };
 }
 
@@ -406,29 +497,84 @@ function textValue(...values: unknown[]) {
 }
 
 function toneForStatus(status: string) {
-  if (["ok", "accepted", "success", "succeeded", "complete", "completed"].includes(status)) {
+  if (["ok", "accepted", "success", "succeeded", "complete", "completed", "running", "active"].includes(status)) {
     return "ok";
   }
-  if (["failed", "error", "errored"].includes(status)) {
+  if (["failed", "error", "errored", "cancelled", "canceled", "rejected"].includes(status)) {
     return "error";
   }
   return "warn";
 }
 
-function formatTime(value: string) {
+function statusLabel(status: string) {
+  return status
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map(titleCase)
+    .join(" ") || "Unknown";
+}
+
+function toneForList(list: ListState<ApiRecord>): Tone {
+  if (list.status === "error") {
+    return "error";
+  }
+  if (list.status === "ready") {
+    return "ok";
+  }
+  return "warn";
+}
+
+function summaryDetail(list: ListState<ApiRecord>, noun: string) {
+  if (list.status === "loading") {
+    return "Refreshing from API";
+  }
+  if (list.status === "error") {
+    return list.message || "Could not load data";
+  }
+  if (list.items.length) {
+    return `${list.items.length} recent ${noun}${list.items.length === 1 ? "" : "s"} loaded`;
+  }
+  return `No recent ${noun}s`;
+}
+
+function parseDate(value: string) {
   if (!value) {
-    return "Unknown";
+    return null;
   }
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatTime(value: number, style: "compact" | "time" | "full") {
+  const options: Intl.DateTimeFormatOptions =
+    style === "time"
+      ? { hour: "numeric", minute: "2-digit", second: "2-digit" }
+      : {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          ...(style === "full" ? { year: "numeric", second: "2-digit", timeZoneName: "short" } : {}),
+        };
+  return new Intl.DateTimeFormat(undefined, options).format(new Date(value));
+}
+
+function relativeTime(value: number) {
+  const seconds = Math.round((value - Date.now()) / 1000);
+  const absSeconds = Math.abs(seconds);
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (absSeconds < 60) {
+    return formatter.format(seconds, "second");
   }
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  const minutes = Math.round(seconds / 60);
+  if (Math.abs(minutes) < 60) {
+    return formatter.format(minutes, "minute");
+  }
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) {
+    return formatter.format(hours, "hour");
+  }
+  return formatter.format(Math.round(hours / 24), "day");
 }
 
 function describeFetchError(error: unknown) {
