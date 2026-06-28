@@ -16,6 +16,12 @@ For local testing, export the values in your shell first. Use a webhook secret
 that matches the value configured in GitHub. Use personal or project-scoped
 tokens with the least privileges needed for the workflow being tested.
 
+`NOVA_SRE_API_TOKEN` is optional. When it is present, `/api/*` control-panel
+endpoints require either an `Authorization: Bearer <token>` header or an
+`X-Nova-SRE-API-Token` header. Leave it unset only for isolated local demos.
+Add it with `kubectl edit secret nova-sre-secrets -n nova-sre` or recreate the
+secret with `--from-literal=NOVA_SRE_API_TOKEN="$NOVA_SRE_API_TOKEN"`.
+
 The server deployment also sets:
 
 ```sh

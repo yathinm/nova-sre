@@ -26,6 +26,7 @@ const (
 	githubDeliveryHeader  = "X-GitHub-Delivery"
 	githubEventHeader     = "X-GitHub-Event"
 	githubSignatureHeader = "X-Hub-Signature-256"
+	apiTokenHeader        = "X-Nova-SRE-API-Token"
 	maxWebhookBodyBytes   = 1 << 20
 )
 
@@ -43,6 +44,7 @@ type Server struct {
 	enqueueEvent  githubEventEnqueuer
 	activity      *activityStore
 	jobLister     kubernetesJobLister
+	apiToken      string
 }
 
 func NewServer(webhookSecret string) *Server {
@@ -81,11 +83,19 @@ func (s *Server) SetKubernetesJobLister(jobLister kubernetesJobLister) {
 	s.jobLister = jobLister
 }
 
+func (s *Server) SetAPIToken(token string) {
+	s.apiToken = strings.TrimSpace(token)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		setAPIHeaders(w)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if !s.validAPIToken(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -255,8 +265,25 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 func setAPIHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256, "+apiTokenHeader)
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+func (s *Server) validAPIToken(r *http.Request) bool {
+	if strings.TrimSpace(s.apiToken) == "" {
+		return true
+	}
+	candidate := strings.TrimSpace(r.Header.Get(apiTokenHeader))
+	if candidate == "" {
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		if scheme, value, ok := strings.Cut(auth, " "); ok && strings.EqualFold(scheme, "Bearer") {
+			candidate = strings.TrimSpace(value)
+		}
+	}
+	if candidate == "" {
+		return false
+	}
+	return hmac.Equal([]byte(candidate), []byte(s.apiToken))
 }
 
 type kubernetesJobLister interface {

@@ -96,6 +96,7 @@ h2 {
   gap: 8px;
 }
 
+.api-control > input,
 .api-row input {
   width: 100%;
   min-height: 44px;
