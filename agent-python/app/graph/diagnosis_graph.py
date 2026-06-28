@@ -17,7 +17,16 @@ ERROR_MARKERS = (
 FAILURE_PATTERNS = (
     (
         "test_failure",
-        ("assert", "pytest", "test failed", "tests failed", "jest", "rspec"),
+        (
+            "assert",
+            "pytest",
+            "test failed",
+            "tests failed",
+            "failed test",
+            "failed tests/",
+            "jest",
+            "rspec",
+        ),
         "A test failure is blocking the run.",
         "Re-run the failing test locally, inspect the assertion diff, and update either the "
         "code or the test fixture that no longer matches expected behavior.",

@@ -30,6 +30,13 @@ def test_diagnose_endpoint_returns_markdown_comment_with_log_block() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["run_id"] == "run-123"
+    assert body["status"] == "identified"
+    assert body["summary"] == "ERROR database connection failed"
+    assert body["root_cause"] == body["result"]["root_cause"]
+    assert body["suggested_fix"] == body["result"]["suggested_fix"]
+    assert body["result"]["failure_classification"] == "generic_failure"
+    assert body["result"]["metadata"]["repository"] == "acme/nova"
+    assert body["result"]["metadata"]["sha"] == "abc123"
     assert "database connection failed" in body["diagnosis"]
     assert "## Nova-SRE diagnosis" in body["pr_comment"]
     assert "### Root cause summary" in body["pr_comment"]
@@ -56,7 +63,74 @@ def test_diagnose_endpoint_uses_safe_fallback_for_empty_logs() -> None:
     assert response.status_code == 200
     body = response.json()
     assert "No error-like log lines" in body["diagnosis"]
+    assert body["status"] == "needs_more_logs"
+    assert body["result"]["status"] == "needs_more_logs"
     assert "```log\nNo log excerpt was available for this diagnosis.\n```" in body["pr_comment"]
+
+
+def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-123",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "job_name": "failed-job",
+            "namespace": "runner-jobs",
+            "reason": "BackoffLimitExceeded",
+            "message": "Job failed after retry budget was exhausted.",
+            "pull_request": {
+                "number": 42,
+                "url": "https://github.com/acme/widgets/pull/42",
+                "head": "abcdef",
+                "base": "main",
+            },
+            "observed_time": "2026-06-27T12:34:56Z",
+            "logs": [
+                {
+                    "pod": "pod-1",
+                    "container": "runner",
+                    "logs": "pytest tests/test_api.py\nFAILED tests/test_api.py::test_login",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == "delivery-123"
+    assert body["repo"] == "acme/widgets"
+    assert body["status"] == "identified"
+    assert body["result"]["failure_classification"] == "test_failure"
+    assert "test failure" in body["result"]["root_cause"].lower()
+    assert "failing test" in body["result"]["suggested_fix"]
+    assert "[pod-1/runner] FAILED tests/test_api.py::test_login" in body["pr_comment"]
+    assert body["result"]["metadata"] == {
+        "delivery_id": "delivery-123",
+        "event": "workflow_run",
+        "repository": "acme/widgets",
+        "sha": "abcdef",
+        "job_name": "failed-job",
+        "namespace": "runner-jobs",
+        "reason": "BackoffLimitExceeded",
+        "message": "Job failed after retry budget was exhausted.",
+        "pull_request": {
+            "number": 42,
+            "url": "https://github.com/acme/widgets/pull/42",
+            "head": "abcdef",
+            "base": "main",
+        },
+        "observed_time": "2026-06-27T12:34:56Z",
+        "github_owner": None,
+        "github_repo": None,
+        "github_pr_number": 42,
+    }
+    assert body["result"]["links"] == [
+        {"label": "pull_request", "url": "https://github.com/acme/widgets/pull/42"}
+    ]
 
 
 def test_diagnose_endpoint_neutralizes_nested_fences_in_logs() -> None:
@@ -221,6 +295,11 @@ def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> Non
     assert body["github_owner"] == "acme"
     assert body["github_repo"] == "nova"
     assert body["github_pr_number"] == 42
+    assert body["result"]["metadata"]["github_owner"] == "acme"
+    assert body["result"]["links"] == [
+        {"label": "github_pull_request", "url": "https://github.com/acme/nova/pull/42"},
+        {"label": "github_comment", "url": "https://github.com/acme/nova/pull/42#comment"},
+    ]
     assert len(requests) == 1
     assert str(requests[0].url) == "https://api.github.test/repos/acme/nova/issues/42/comments"
     assert requests[0].headers["authorization"] == "Bearer test-token"
