@@ -116,7 +116,7 @@ func (s *activityStore) ObserveJob(update runner.JobStatusUpdate) {
 		record.Event = firstNonEmpty(record.Event, update.Event)
 		record.Repository = firstNonEmpty(update.Repository, record.Repository)
 		record.SHA = firstNonEmpty(update.SHA, record.SHA)
-		record.Status = firstNonEmpty(update.Status, record.Status)
+		record.Status = normalizeActivityStatus(firstNonEmpty(update.Status, record.Status))
 		record.Namespace = firstNonEmpty(update.Namespace, record.Namespace)
 		record.JobName = firstNonEmpty(update.JobName, record.JobName)
 		record.Reason = firstNonEmpty(update.Reason, record.Reason)
@@ -139,7 +139,7 @@ func (s *activityStore) summary() activitySummary {
 	}
 	for _, record := range s.records {
 		summary.Total++
-		summary.ByStatus[firstNonEmpty(record.Status, "unknown")]++
+		summary.ByStatus[normalizeActivityStatus(firstNonEmpty(record.Status, "unknown"))]++
 		summary.ByEvent[firstNonEmpty(record.Event, "unknown")]++
 		if record.UpdatedAt.After(summary.UpdatedAt) {
 			summary.UpdatedAt = record.UpdatedAt
@@ -155,7 +155,7 @@ func summarizeActivityRecords(records []activityRecord) activitySummary {
 	}
 	for _, record := range records {
 		summary.Total++
-		summary.ByStatus[firstNonEmpty(record.Status, "unknown")]++
+		summary.ByStatus[normalizeActivityStatus(firstNonEmpty(record.Status, "unknown"))]++
 		summary.ByEvent[firstNonEmpty(record.Event, "unknown")]++
 		if record.UpdatedAt.After(summary.UpdatedAt) {
 			summary.UpdatedAt = record.UpdatedAt
@@ -186,6 +186,17 @@ func (s *activityStore) recent(limit int) []activityRecord {
 		records = records[:limit]
 	}
 	return records
+}
+
+func normalizeActivityStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "success", "complete", "completed":
+		return "succeeded"
+	case "":
+		return "unknown"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
 }
 
 func (s *activityStore) recentJobs(limit int) []activityRecord {

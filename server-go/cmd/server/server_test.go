@@ -151,7 +151,7 @@ func TestAPIEventsTracksWebhookAndRunnerStatus(t *testing.T) {
 		t.Fatalf("expected one event, got %#v", response.Events)
 	}
 	event := response.Events[0]
-	if event.Status != "success" || event.JobName != "nova-sre-push-abc12" || event.Repository != "acme/widgets" {
+	if event.Status != "succeeded" || event.JobName != "nova-sre-push-abc12" || event.Repository != "acme/widgets" {
 		t.Fatalf("unexpected event record: %#v", event)
 	}
 
@@ -212,6 +212,21 @@ func TestAPIListLimitIsBoundedByActivityStore(t *testing.T) {
 	}](t, server, "/api/events?limit=1")
 	if len(oneEvent.Events) != 1 {
 		t.Fatalf("expected smaller caller limit to be honored, got %#v", oneEvent.Events)
+	}
+}
+
+func TestActivitySummaryNormalizesSuccessfulStatusAliases(t *testing.T) {
+	summary := summarizeActivityRecords([]activityRecord{
+		{DeliveryID: "delivery-1", Event: "push", Status: "success"},
+		{DeliveryID: "delivery-2", Event: "push", Status: "completed"},
+		{DeliveryID: "delivery-3", Event: "push", Status: "succeeded"},
+	})
+
+	if summary.Total != 3 || summary.ByStatus["succeeded"] != 3 {
+		t.Fatalf("expected successful aliases to collapse into succeeded bucket: %#v", summary)
+	}
+	if _, ok := summary.ByStatus["success"]; ok {
+		t.Fatalf("did not expect separate success bucket: %#v", summary)
 	}
 }
 
