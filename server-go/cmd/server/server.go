@@ -240,12 +240,7 @@ func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	limit := defaultActivityLimit
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
+	limit := s.apiListLimit(r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events": s.activityEvents(r.Context(), limit),
 	})
@@ -257,15 +252,23 @@ func (s *Server) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	limit := defaultActivityLimit
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
+	limit := s.apiListLimit(r)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"jobs": s.activityJobs(r.Context(), limit),
 	})
+}
+
+func (s *Server) apiListLimit(r *http.Request) int {
+	limit := defaultActivityLimit
+	if s.activity != nil && s.activity.limit > 0 {
+		limit = s.activity.limit
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed < limit {
+			limit = parsed
+		}
+	}
+	return limit
 }
 
 func validGitHubSignature(signatureHeader string, body []byte, secret string) bool {

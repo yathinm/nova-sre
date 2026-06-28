@@ -171,6 +171,50 @@ func TestAPIEventsTracksWebhookAndRunnerStatus(t *testing.T) {
 	}
 }
 
+func TestAPIListLimitIsBoundedByActivityStore(t *testing.T) {
+	activity := newActivityStore(2)
+	server := NewServerWithEnqueuerAndActivity("", func(_ context.Context, event githubEvent) error {
+		activity.ObserveJob(runner.JobStatusUpdate{
+			DeliveryID: event.DeliveryID,
+			Event:      event.Event,
+			Status:     "queued",
+			Namespace:  "nova-sre",
+			JobName:    "nova-sre-" + event.DeliveryID,
+		})
+		return nil
+	}, activity)
+
+	for i := 1; i <= 3; i++ {
+		req := webhookRequest([]byte(`{"repository":{"full_name":"acme/widgets"}}`), fmt.Sprintf("delivery-%d", i), "push")
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("request %d: expected accepted webhook, got %d", i, rec.Code)
+		}
+	}
+
+	events := getJSON[struct {
+		Events []activityRecord `json:"events"`
+	}](t, server, "/api/events?limit=100000")
+	if len(events.Events) != 2 {
+		t.Fatalf("expected events capped at activity store limit, got %#v", events.Events)
+	}
+
+	jobs := getJSON[struct {
+		Jobs []activityRecord `json:"jobs"`
+	}](t, server, "/api/jobs?limit=100000")
+	if len(jobs.Jobs) != 2 {
+		t.Fatalf("expected jobs capped at activity store limit, got %#v", jobs.Jobs)
+	}
+
+	oneEvent := getJSON[struct {
+		Events []activityRecord `json:"events"`
+	}](t, server, "/api/events?limit=1")
+	if len(oneEvent.Events) != 1 {
+		t.Fatalf("expected smaller caller limit to be honored, got %#v", oneEvent.Events)
+	}
+}
+
 func TestAPIJobsReflectKubernetesJobStatus(t *testing.T) {
 	started := time.Date(2026, 6, 22, 9, 0, 0, 0, time.UTC)
 	completed := started.Add(3 * time.Minute)
