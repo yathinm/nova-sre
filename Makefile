@@ -5,7 +5,7 @@ KUBECTL_VALIDATE ?= true
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics validate-api-cors validate-k8s validate-webhook-tunnel run-server run-frontend all-local test-go lint-go test-agent lint-agent
+        validate-metrics validate-api-cors validate-k8s validate-scripts validate-webhook-tunnel run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -114,6 +114,10 @@ ifeq ($(KUBECTL_VALIDATE),false)
 else
 	kubectl apply --dry-run=client --validate=true -f k8s/base -f k8s/rbac
 endif
+
+validate-scripts: ## Validate repository Ruby helper scripts
+	ruby -c scripts/validate-k8s-yaml.rb
+	ruby -c scripts/validate-webhook-tunnel.rb
 
 validate-webhook-tunnel: ## Validate a public webhook tunnel; set WEBHOOK_BASE_URL and optionally GITHUB_WEBHOOK_SECRET
 	ruby scripts/validate-webhook-tunnel.rb
