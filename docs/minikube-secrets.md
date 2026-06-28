@@ -29,6 +29,7 @@ NOVA_SRE_AGENT_URL=http://nova-sre-agent.nova-sre.svc.cluster.local:8000
 RUNNER_JOB_TTL_SECONDS=900
 NOVA_SRE_ACTIVITY_LIMIT=200
 NOVA_SRE_DELIVERY_CACHE_TTL=15m
+NOVA_SRE_READ_HEADER_TIMEOUT=5s
 ```
 
 `NOVA_SRE_ALLOWED_ORIGINS` is optional. Leave it unset for isolated local demos,

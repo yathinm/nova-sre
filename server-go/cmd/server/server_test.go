@@ -596,6 +596,23 @@ func TestIntFromEnv(t *testing.T) {
 	}
 }
 
+func TestDurationFromEnv(t *testing.T) {
+	t.Setenv("NOVA_SRE_READ_HEADER_TIMEOUT", "750ms")
+	if got := durationFromEnv("NOVA_SRE_READ_HEADER_TIMEOUT", time.Second); got != 750*time.Millisecond {
+		t.Fatalf("expected parsed duration 750ms, got %s", got)
+	}
+
+	t.Setenv("NOVA_SRE_READ_HEADER_TIMEOUT", "3")
+	if got := durationFromEnv("NOVA_SRE_READ_HEADER_TIMEOUT", time.Second); got != 3*time.Second {
+		t.Fatalf("expected parsed seconds 3s, got %s", got)
+	}
+
+	t.Setenv("NOVA_SRE_READ_HEADER_TIMEOUT", "not-a-duration")
+	if got := durationFromEnv("NOVA_SRE_READ_HEADER_TIMEOUT", time.Second); got != time.Second {
+		t.Fatalf("expected fallback duration, got %s", got)
+	}
+}
+
 func webhookRequest(body []byte, deliveryID string, event string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(body)))
 	req.Header.Set(githubDeliveryHeader, deliveryID)
