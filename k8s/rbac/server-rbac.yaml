@@ -16,6 +16,7 @@ rules:
       - jobs
     verbs:
       - create
+      - get
       - list
       - watch
   - apiGroups:
