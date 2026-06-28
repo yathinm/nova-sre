@@ -71,6 +71,30 @@ def api_get_json(uri, api_token)
   JSON.parse(response.body)
 end
 
+def signed_ping_request(webhook_uri, secret, delivery_id, payload, user_agent)
+  signature = "sha256=#{OpenSSL::HMAC.hexdigest('SHA256', secret, payload)}"
+  post = Net::HTTP::Post.new(webhook_uri)
+  post["Content-Type"] = "application/json"
+  post["User-Agent"] = user_agent
+  post["X-GitHub-Delivery"] = delivery_id
+  post["X-GitHub-Event"] = "ping"
+  post["X-Hub-Signature-256"] = signature
+  post.body = payload
+  post
+end
+
+def wait_for_event(events_uri, api_token, delivery_id, expected_statuses)
+  found = nil
+  10.times do
+    payload = api_get_json(events_uri, api_token)
+    found = Array(payload["events"]).find { |event| event["delivery_id"] == delivery_id }
+    break if found && (expected_statuses.empty? || expected_statuses.include?(found["status"]))
+
+    sleep 0.5
+  end
+  found
+end
+
 secret = webhook_secret(namespace, secret_name)
 abort("set GITHUB_WEBHOOK_SECRET or make #{secret_name} readable in namespace #{namespace}") if secret.empty?
 
@@ -81,6 +105,19 @@ abort("GET #{health_uri} returned unexpected body") unless health.body.to_s.stri
 puts "api health ok: #{health_uri}"
 
 webhook_uri = uri_for(api_base, "/webhook")
+invalid_payload = JSON.generate({ zen: "Reject invalid webhook signatures." })
+invalid_delivery_id = "local-webhook-invalid-#{SecureRandom.uuid}"
+invalid = Net::HTTP::Post.new(webhook_uri)
+invalid["Content-Type"] = "application/json"
+invalid["User-Agent"] = "nova-sre-local-webhook-validator"
+invalid["X-GitHub-Delivery"] = invalid_delivery_id
+invalid["X-GitHub-Event"] = "ping"
+invalid["X-Hub-Signature-256"] = "sha256=#{'0' * 64}"
+invalid.body = invalid_payload
+invalid_response = request(webhook_uri, invalid)
+expect_status(invalid_response, [401], "POST #{webhook_uri} with invalid signature")
+puts "invalid signature rejected: delivery=#{invalid_delivery_id}"
+
 payload = JSON.generate(
   {
     zen: "Validate the local Nova-SRE webhook path.",
@@ -91,31 +128,40 @@ payload = JSON.generate(
   }
 )
 delivery_id = "local-webhook-#{SecureRandom.uuid}"
-signature = "sha256=#{OpenSSL::HMAC.hexdigest('SHA256', secret, payload)}"
 
-post = Net::HTTP::Post.new(webhook_uri)
-post["Content-Type"] = "application/json"
-post["User-Agent"] = "nova-sre-local-webhook-validator"
-post["X-GitHub-Delivery"] = delivery_id
-post["X-GitHub-Event"] = "ping"
-post["X-Hub-Signature-256"] = signature
-post.body = payload
-
+post = signed_ping_request(webhook_uri, secret, delivery_id, payload, "nova-sre-local-webhook-validator")
 delivery = request(webhook_uri, post)
 expect_status(delivery, [202], "POST #{webhook_uri}")
 puts "signed ping accepted: delivery=#{delivery_id}"
 
 events_uri = uri_for(api_base, "/api/events")
 events_uri.query = "limit=20"
-found = nil
-10.times do
-  payload = api_get_json(events_uri, api_token)
-  found = Array(payload["events"]).find { |event| event["delivery_id"] == delivery_id }
-  break if found
-
-  sleep 0.5
-end
+found = wait_for_event(events_uri, api_token, delivery_id, [])
 
 abort("delivery #{delivery_id} was not visible in /api/events") unless found
 puts "delivery visible: status=#{found['status']} event=#{found['event']}"
+
+duplicate_delivery_id = "local-webhook-duplicate-#{SecureRandom.uuid}"
+duplicate_payload = JSON.generate(
+  {
+    zen: "Validate Nova-SRE duplicate delivery handling.",
+    hook_id: 0,
+    repository: {
+      full_name: "local/webhook-validation"
+    }
+  }
+)
+duplicate_post = signed_ping_request(webhook_uri, secret, duplicate_delivery_id, duplicate_payload, "nova-sre-local-webhook-validator")
+expect_status(request(webhook_uri, duplicate_post), [202], "first duplicate probe POST #{webhook_uri}")
+duplicate_retry = signed_ping_request(webhook_uri, secret, duplicate_delivery_id, duplicate_payload, "nova-sre-local-webhook-validator")
+expect_status(request(webhook_uri, duplicate_retry), [202], "second duplicate probe POST #{webhook_uri}")
+duplicate = wait_for_event(events_uri, api_token, duplicate_delivery_id, ["duplicate"])
+abort("duplicate delivery #{duplicate_delivery_id} was not visible as duplicate in /api/events") unless duplicate
+puts "duplicate delivery visible: delivery=#{duplicate_delivery_id}"
+
+summary_uri = uri_for(api_base, "/api/summary")
+summary = api_get_json(summary_uri, api_token)
+ping_count = summary.fetch("by_event", {}).fetch("ping", 0).to_i
+abort("/api/summary did not include ping activity") if ping_count <= 0
+puts "summary visible: ping=#{ping_count} total=#{summary['total']}"
 puts "Local signed webhook validation passed"
