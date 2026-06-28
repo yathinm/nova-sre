@@ -5,9 +5,10 @@ profile by Terraform. Prometheus and Grafana run in the `observability`
 namespace, while the Go server exposes Prometheus-format application metrics at
 `/metrics` on port `8080`.
 
-There is no separate checked-in stats frontend in this repository right now.
-The local stats frontend is Grafana, available at `http://localhost:3000` after
-port-forwarding the Grafana service.
+Grafana is the local observability frontend, available at
+`http://localhost:3000` after port-forwarding the Grafana service. The separate
+Nova-SRE control panel is a product UI for pipeline triage and is documented in
+[control-panel.md](control-panel.md).
 
 ## Current Phase
 

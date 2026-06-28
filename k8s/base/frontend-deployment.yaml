@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nova-sre-frontend
+  namespace: nova-sre
+  labels:
+    app: nova-sre-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nova-sre-frontend
+  template:
+    metadata:
+      labels:
+        app: nova-sre-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: nova-sre-frontend:local
+          imagePullPolicy: Never
+          env:
+            - name: NOVA_SRE_API_BASE
+              value: http://localhost:8080
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
