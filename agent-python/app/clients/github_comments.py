@@ -1,10 +1,12 @@
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
 
 GITHUB_API_BASE_URL = "https://api.github.com"
+MAX_GITHUB_ERROR_DETAIL_CHARS = 240
 
 
 @dataclass(frozen=True)
@@ -70,5 +72,50 @@ class GitHubPullRequestCommentClient:
 
         return GitHubCommentResult(
             posted=False,
-            error=f"GitHub PR comment posting failed with HTTP {response.status_code}.",
+            error=github_error_message(response),
         )
+
+
+def github_error_message(response: httpx.Response) -> str:
+    detail = _github_error_detail(response)
+    message = f"GitHub PR comment posting failed with HTTP {response.status_code}"
+    if response.status_code in (401, 403):
+        message += "; check GITHUB_TOKEN permissions for issue comments"
+    if detail:
+        message += f": {detail}"
+    return f"{message}."
+
+
+def _github_error_detail(response: httpx.Response) -> str:
+    try:
+        payload: Any = response.json()
+    except ValueError:
+        payload = response.text
+
+    if isinstance(payload, dict):
+        detail = str(payload.get("message") or "")
+        errors = payload.get("errors")
+        if isinstance(errors, list) and errors:
+            detail = " ".join(part for part in (detail, _summarize_errors(errors)) if part)
+    else:
+        detail = str(payload or "")
+
+    detail = " ".join(detail.split())
+    if len(detail) > MAX_GITHUB_ERROR_DETAIL_CHARS:
+        detail = detail[: MAX_GITHUB_ERROR_DETAIL_CHARS - 3].rstrip() + "..."
+    return detail
+
+
+def _summarize_errors(errors: list[Any]) -> str:
+    parts: list[str] = []
+    for error in errors[:3]:
+        if isinstance(error, dict):
+            field = error.get("field")
+            code = error.get("code")
+            message = error.get("message")
+            parts.append(
+                " ".join(str(part) for part in (field, code, message) if part)
+            )
+        else:
+            parts.append(str(error))
+    return "; ".join(parts)
