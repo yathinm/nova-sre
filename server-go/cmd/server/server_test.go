@@ -77,6 +77,19 @@ func TestWebhookRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
+func TestWebhookRejectsOversizedBody(t *testing.T) {
+	server := NewServer("")
+	body := strings.Repeat("x", maxWebhookBodyBytes+1)
+	req := webhookRequest([]byte(body), "delivery-1", "ping")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status %d, got %d", http.StatusRequestEntityTooLarge, rec.Code)
+	}
+}
+
 func TestWebhookAcceptsDuplicateDeliveryWithoutReprocessing(t *testing.T) {
 	server := NewServer("")
 	enqueued := 0
