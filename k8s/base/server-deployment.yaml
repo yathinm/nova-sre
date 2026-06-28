@@ -17,6 +17,8 @@ spec:
     spec:
       serviceAccountName: nova-sre-server
       securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -67,6 +69,8 @@ spec:
               value: "900"
             - name: NOVA_SRE_ACTIVITY_LIMIT
               value: "200"
+            - name: NOVA_SRE_ACTIVITY_STORE_PATH
+              value: /var/lib/nova-sre/activity.json
             - name: NOVA_SRE_DELIVERY_CACHE_TTL
               value: "15m"
             - name: NOVA_SRE_RUNNER_LOG_LIMIT_BYTES
@@ -92,3 +96,9 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+          volumeMounts:
+            - name: activity-store
+              mountPath: /var/lib/nova-sre
+      volumes:
+        - name: activity-store
+          emptyDir: {}

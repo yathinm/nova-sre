@@ -50,14 +50,15 @@ type Server struct {
 }
 
 type runtimeConfig struct {
-	ActivityLimit       int    `json:"activity_limit"`
-	DeliveryCacheTTL    string `json:"delivery_cache_ttl"`
-	APIAuthEnabled      bool   `json:"api_auth_enabled"`
-	AgentAuthEnabled    bool   `json:"agent_auth_enabled"`
-	APICORSRestricted   bool   `json:"api_cors_restricted"`
-	RunnerNamespace     string `json:"runner_namespace,omitempty"`
-	RunnerImage         string `json:"runner_image,omitempty"`
-	RunnerJobTTLSeconds int32  `json:"runner_job_ttl_seconds,omitempty"`
+	ActivityLimit        int    `json:"activity_limit"`
+	ActivityStoreEnabled bool   `json:"activity_store_enabled"`
+	DeliveryCacheTTL     string `json:"delivery_cache_ttl"`
+	APIAuthEnabled       bool   `json:"api_auth_enabled"`
+	AgentAuthEnabled     bool   `json:"agent_auth_enabled"`
+	APICORSRestricted    bool   `json:"api_cors_restricted"`
+	RunnerNamespace      string `json:"runner_namespace,omitempty"`
+	RunnerImage          string `json:"runner_image,omitempty"`
+	RunnerJobTTLSeconds  int32  `json:"runner_job_ttl_seconds,omitempty"`
 }
 
 func NewServer(webhookSecret string) *Server {

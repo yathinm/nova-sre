@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +22,7 @@ type activityStore struct {
 	limit   int
 	records map[string]activityRecord
 	order   []string
+	path    string
 	now     func() time.Time
 }
 
@@ -42,6 +47,11 @@ type activitySummary struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
+type activitySnapshot struct {
+	Version int              `json:"version"`
+	Records []activityRecord `json:"records"`
+}
+
 func newActivityStore(limit int) *activityStore {
 	if limit <= 0 {
 		limit = defaultActivityLimit
@@ -51,6 +61,18 @@ func newActivityStore(limit int) *activityStore {
 		records: make(map[string]activityRecord),
 		now:     time.Now,
 	}
+}
+
+func newPersistentActivityStore(limit int, path string) (*activityStore, error) {
+	store := newActivityStore(limit)
+	store.path = strings.TrimSpace(path)
+	if store.path == "" {
+		return store, nil
+	}
+	if err := store.load(); err != nil {
+		return store, err
+	}
+	return store, nil
 }
 
 func (s *activityStore) recordReceived(event githubEvent) {
@@ -79,6 +101,7 @@ func (s *activityStore) recordReceived(event githubEvent) {
 	record.UpdatedAt = now
 	s.records[event.DeliveryID] = record
 	s.pruneLocked()
+	s.persistLocked()
 }
 
 func (s *activityStore) recordAccepted(event githubEvent) {
@@ -231,6 +254,7 @@ func (s *activityStore) update(deliveryID string, mutate func(activityRecord) ac
 	record.UpdatedAt = now
 	s.records[deliveryID] = record
 	s.pruneLocked()
+	s.persistLocked()
 }
 
 func (s *activityStore) timestamp() time.Time {
@@ -245,6 +269,81 @@ func (s *activityStore) pruneLocked() {
 		deliveryID := s.order[0]
 		s.order = s.order[1:]
 		delete(s.records, deliveryID)
+	}
+}
+
+func (s *activityStore) load() error {
+	if s == nil || strings.TrimSpace(s.path) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil
+	}
+
+	var snapshot activitySnapshot
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		var records []activityRecord
+		if fallbackErr := json.Unmarshal(data, &records); fallbackErr != nil {
+			return err
+		}
+		snapshot.Records = records
+	}
+
+	s.records = make(map[string]activityRecord)
+	s.order = nil
+	for _, record := range snapshot.Records {
+		if strings.TrimSpace(record.DeliveryID) == "" {
+			continue
+		}
+		s.records[record.DeliveryID] = record
+		s.order = append(s.order, record.DeliveryID)
+	}
+	s.pruneLocked()
+	return nil
+}
+
+func (s *activityStore) persistLocked() {
+	if s == nil || strings.TrimSpace(s.path) == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+		log.Printf("failed to create activity store directory path=%s: %v", s.path, err)
+		return
+	}
+
+	snapshot := activitySnapshot{
+		Version: 1,
+		Records: make([]activityRecord, 0, len(s.records)),
+	}
+	for _, deliveryID := range s.order {
+		record, ok := s.records[deliveryID]
+		if ok {
+			snapshot.Records = append(snapshot.Records, record)
+		}
+	}
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		log.Printf("failed to marshal activity store path=%s: %v", s.path, err)
+		return
+	}
+	data = append(data, '\n')
+
+	tmpPath := s.path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+		log.Printf("failed to write activity store path=%s: %v", s.path, err)
+		return
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		_ = os.Remove(tmpPath)
+		log.Printf("failed to replace activity store path=%s: %v", s.path, err)
 	}
 }
 
