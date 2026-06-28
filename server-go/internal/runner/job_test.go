@@ -19,7 +19,7 @@ import (
 )
 
 func TestRealUnhealthyPRSignalForNovaSRE(t *testing.T) {
-	t.Fatalf("intentional real unhealthy PR signal for Nova-SRE end-to-end diagnosis with Go runner")
+	t.Fatalf("intentional real unhealthy PR signal for Nova-SRE end-to-end diagnosis with resourced Go runner")
 }
 
 func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
