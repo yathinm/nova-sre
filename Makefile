@@ -1,4 +1,5 @@
 PROFILE=nova-sre
+PYTHON ?= python3
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-apply tf-destroy docker-env docker-build deploy-apps \
@@ -96,10 +97,10 @@ lint-go: ## Lint Go source
 # ── Python agent ──────────────────────────────────────────────────────────────
 
 test-agent: ## Run Python agent tests
-	cd agent-python && python -m pytest
+	cd agent-python && $(PYTHON) -m pytest
 
 lint-agent: ## Lint Python agent source
-	cd agent-python && ruff check .
+	cd agent-python && $(PYTHON) -m ruff check .
 
 # ── Composite ─────────────────────────────────────────────────────────────────
 
