@@ -58,6 +58,8 @@ management, and a more complete operator control surface.
 - A production-oriented Kubernetes overlay now provides starter TLS ingress and
   PVC-backed activity storage manifests, with validation for TLS, API auth/CORS
   secret wiring, production image replacements, and the activity PVC.
+- Kubernetes secret setup can be synced from exported environment variables
+  without putting secret values in `kubectl` command arguments.
 - A release checklist now covers preflight validation, image publishing,
   production overlay customization, rollout, smoke tests, monitoring, and
   rollback.
@@ -116,9 +118,8 @@ CI currently gates:
   showing the server-level create/upsert mode.
 - Customize and harden the production ingress/TLS overlay for the target domain,
   ingress controller, certificate issuer, image registry, and secret manager.
-- Add environment-specific production secret-management automation for
-  `NOVA_SRE_API_TOKEN`, `NOVA_SRE_ALLOWED_ORIGINS`, GitHub credentials, and
-  agent auth.
+- Connect external secret-manager workflows to the same `nova-sre-secrets` key
+  contract used by the environment-driven sync helper.
 - Connect image publishing and production image stamping into a single release
   command or workflow.
 

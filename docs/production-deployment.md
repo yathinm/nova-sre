@@ -31,6 +31,9 @@ Before applying it to a real cluster:
   frontend origin, for example `https://nova-sre.example.com`.
 - Set `NOVA_SRE_API_TOKEN` for the control-panel API before exposing `/api/*`
   beyond an isolated local demo.
+- Run `make sync-k8s-secret` from a trusted shell with the required environment
+  variables exported, or use an external secret manager that creates the same
+  `nova-sre-secrets` keys.
 
 `make validate-production-k8s` renders the overlay and checks that TLS ingress,
 production image replacements, the activity PVC, `NOVA_SRE_API_TOKEN`, and
@@ -65,6 +68,9 @@ access mode, or size for the target cluster before applying the overlay.
 - Keep `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `OPENAI_API_KEY`,
   `NOVA_SRE_API_TOKEN`, and `NOVA_SRE_AGENT_TOKEN` in Kubernetes Secrets or an
   external secret manager.
+- Prefer `make sync-k8s-secret` over `kubectl create secret --from-literal` for
+  manual setup so secret values do not appear in shell history or process
+  arguments.
 - Use the least-privileged GitHub token that can read and write issue comments
   for repositories where Nova-SRE should post diagnoses.
 - Keep TLS enabled for all public traffic.

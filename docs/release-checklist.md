@@ -65,6 +65,13 @@ Kubernetes Secrets or an external secret manager:
 - `NOVA_SRE_AGENT_TOKEN`
 - `NOVA_SRE_ALLOWED_ORIGINS`
 
+For manual Kubernetes Secret setup from exported environment variables, use:
+
+```sh
+NOVA_SRE_SECRET_DRY_RUN=true make sync-k8s-secret
+make sync-k8s-secret
+```
+
 Also confirm the production overlay has the correct:
 
 - Hostname in `k8s/overlays/production/ingress.yaml`
