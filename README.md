@@ -221,7 +221,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    - The Go orchestrator creates a Kubernetes Job in Minikube.
    - The job emits logs and metrics for collection.
    - The LangGraph agent diagnoses failures.
-   - The GitHub integration posts the result back to the pull request.
+   - The GitHub integration upserts the Nova-SRE diagnosis comment on the pull
+     request and reports sanitized comment failures back through recent job
+     details.
 
 ## Makefile Workflow
 

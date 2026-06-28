@@ -289,13 +289,14 @@ function App() {
           status={jobs.status}
           updatedAt={jobs.updatedAt}
           emptyTitle="No jobs yet"
-          headers={["Job", "Namespace", "Event", "Observed", "Result"]}
+          headers={["Job", "Namespace", "Event", "Observed", "Result", "Detail"]}
           rows={jobs.items.slice(0, 20).map((item) => [
             <CodeValue key="job" value={textValue(item.job_name, item.jobName, item.name)} />,
             <CodeValue key="namespace" value={textValue(item.namespace, "nova-sre")} />,
             <strong key="event">{textValue(item.event, item.type)}</strong>,
             <TimeValue key="observed" value={textValue(item.observed_time, item.observedTime, item.created_at, item.createdAt, item.completed_at, "")} />,
             <StatusPill key="status" value={textValue(item.status, item.result, resultFromBooleans(item))} />,
+            <DetailValue key="detail" value={jobDetail(item)} />,
           ])}
         />
       </section>
@@ -440,6 +441,10 @@ function StatusPill({ value }: { value: string }) {
 
 function CodeValue({ value }: { value: string }) {
   return <code className="code-value">{value}</code>;
+}
+
+function DetailValue({ value }: { value: string }) {
+  return <span className="truncate-value" title={value}>{value}</span>;
 }
 
 function TimeValue({ value }: { value: string }) {
@@ -695,13 +700,17 @@ function textValue(...values: unknown[]) {
 }
 
 function toneForStatus(status: string) {
-  if (["ok", "accepted", "success", "succeeded", "complete", "completed", "running", "active"].includes(status)) {
+  if (["ok", "accepted", "success", "succeeded", "complete", "completed", "running", "active", "diagnosed"].includes(status)) {
     return "ok";
   }
-  if (["failed", "error", "errored", "cancelled", "canceled", "rejected"].includes(status)) {
+  if (["failed", "error", "errored", "cancelled", "canceled", "rejected", "diagnosis_error", "diagnosis_comment_error"].includes(status)) {
     return "error";
   }
   return "warn";
+}
+
+function jobDetail(item: ApiRecord) {
+  return textValue(item.message, item.reason, item.github_comment_error, item.github_comment_action, "No detail");
 }
 
 function statusLabel(status: string) {

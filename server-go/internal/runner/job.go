@@ -76,7 +76,7 @@ type JobLogCollector interface {
 }
 
 type AgentClient interface {
-	Diagnose(ctx context.Context, request DiagnoseRequest) error
+	Diagnose(ctx context.Context, request DiagnoseRequest) (DiagnoseResponse, error)
 }
 
 type JobObserver interface {
@@ -130,6 +130,13 @@ type DiagnoseRequest struct {
 	Logs         []LogEntry          `json:"logs"`
 	WebhookBody  json.RawMessage     `json:"webhook_body,omitempty"`
 	ObservedTime time.Time           `json:"observed_time"`
+}
+
+type DiagnoseResponse struct {
+	GitHubCommentPosted bool   `json:"github_comment_posted"`
+	GitHubCommentURL    string `json:"github_comment_url"`
+	GitHubCommentError  string `json:"github_comment_error"`
+	GitHubCommentAction string `json:"github_comment_action"`
 }
 
 type KubernetesJobCreator struct {
@@ -264,17 +271,17 @@ func NewHTTPAgentClient(agentURL string, timeout time.Duration, tokens ...string
 	}, nil
 }
 
-func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest) error {
+func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest) (DiagnoseResponse, error) {
 	if c == nil {
-		return nil
+		return DiagnoseResponse{}, nil
 	}
 	if strings.TrimSpace(c.URL) == "" {
-		return errors.New("agent URL is required")
+		return DiagnoseResponse{}, errors.New("agent URL is required")
 	}
 
 	body, err := json.Marshal(request)
 	if err != nil {
-		return fmt.Errorf("marshal diagnose request: %w", err)
+		return DiagnoseResponse{}, fmt.Errorf("marshal diagnose request: %w", err)
 	}
 
 	timeout := c.Timeout
@@ -286,7 +293,7 @@ func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create diagnose request: %w", err)
+		return DiagnoseResponse{}, fmt.Errorf("create diagnose request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token := strings.TrimSpace(c.Token); token != "" {
@@ -299,15 +306,28 @@ func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("send diagnose request: %w", err)
+		return DiagnoseResponse{}, fmt.Errorf("send diagnose request: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("diagnose request returned status %d", resp.StatusCode)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return DiagnoseResponse{}, fmt.Errorf("diagnose request returned status %d", resp.StatusCode)
 	}
-	return nil
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("read diagnose response: %w", err)
+	}
+	if len(bytes.TrimSpace(bodyBytes)) == 0 {
+		return DiagnoseResponse{}, nil
+	}
+
+	var result DiagnoseResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("decode diagnose response: %w", err)
+	}
+	return result, nil
 }
 
 func firstString(values ...string) string {
@@ -483,7 +503,8 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 		WebhookBody:  append(json.RawMessage(nil), event.Body...),
 		ObservedTime: r.now(),
 	}
-	if err := r.Agent.Diagnose(ctx, request); err != nil {
+	diagnosis, err := r.Agent.Diagnose(ctx, request)
+	if err != nil {
 		r.observeJob(event, metadata, JobStatusUpdate{
 			Status:    "diagnosis_error",
 			Namespace: job.Namespace,
@@ -496,12 +517,34 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 		return
 	}
 
+	if strings.TrimSpace(diagnosis.GitHubCommentError) != "" {
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "diagnosis_comment_error",
+			Namespace: job.Namespace,
+			JobName:   job.Name,
+			Reason:    "GitHubCommentFailed",
+			Message:   diagnosis.GitHubCommentError,
+		})
+		r.logf("diagnosis completed with GitHub comment error namespace=%s name=%s delivery=%s event=%s action=%s: %s",
+			job.Namespace, job.Name, event.DeliveryID, event.Type, diagnosis.GitHubCommentAction, diagnosis.GitHubCommentError)
+		return
+	}
+
+	reason := result.Reason
+	message := result.Message
+	if strings.TrimSpace(diagnosis.GitHubCommentAction) != "" {
+		reason = firstString(diagnosis.GitHubCommentAction, reason)
+	}
+	if strings.TrimSpace(diagnosis.GitHubCommentURL) != "" {
+		message = firstString(diagnosis.GitHubCommentURL, message)
+	}
+
 	r.observeJob(event, metadata, JobStatusUpdate{
 		Status:    "diagnosed",
 		Namespace: job.Namespace,
 		JobName:   job.Name,
-		Reason:    result.Reason,
-		Message:   result.Message,
+		Reason:    reason,
+		Message:   message,
 	})
 	r.logf("sent diagnosis request namespace=%s name=%s delivery=%s event=%s logs=%d",
 		job.Namespace, job.Name, event.DeliveryID, event.Type, len(logs))

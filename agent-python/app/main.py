@@ -51,15 +51,18 @@ async def diagnose(
                 repo=state.github_repo,
                 pr_number=state.github_pr_number,
                 body=state.pr_comment,
+                mode=request.github_comment_mode,
             )
             state.github_comment_posted = comment_result.posted
             state.github_comment_url = comment_result.url
             state.github_comment_error = comment_result.error
+            state.github_comment_action = comment_result.action
         else:
             state.github_comment_error = (
                 "GitHub PR comment posting requires github_owner, github_repo, and "
                 "github_pr_number."
             )
+            state.github_comment_action = "skipped"
 
     diagnosis_result = build_diagnosis_result(state)
     return DiagnosisResponse(
@@ -79,6 +82,7 @@ async def diagnose(
         github_comment_posted=state.github_comment_posted,
         github_comment_url=state.github_comment_url,
         github_comment_error=state.github_comment_error,
+        github_comment_action=state.github_comment_action,
     )
 
 

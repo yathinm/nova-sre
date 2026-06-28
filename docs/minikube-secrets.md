@@ -16,7 +16,10 @@ kubectl create secret generic nova-sre-secrets \
 
 For local testing, export the values in your shell first. Use a webhook secret
 that matches the value configured in GitHub. Use personal or project-scoped
-tokens with the least privileges needed for the workflow being tested.
+tokens with the least privileges needed for the workflow being tested. GitHub
+PR comment posting requires a token that can read and write issue comments for
+the target repository; permission failures are returned as sanitized diagnosis
+metadata and surfaced in recent job details.
 
 `NOVA_SRE_API_TOKEN` is optional. When it is present, `/api/*` control-panel
 endpoints require either an `Authorization: Bearer <token>` header or an
@@ -65,6 +68,10 @@ test needs different runner sizing.
 The agent truncates normalized submitted logs to `NOVA_SRE_MAX_LOG_CHARS` before
 classification and optional LLM prompting. The default keeps diagnosis payloads
 bounded while preserving the beginning and end of oversized log streams.
+When `github_comment_mode` is omitted, diagnosis requests use `upsert` mode:
+the agent updates the existing hidden-marker Nova-SRE PR comment when present
+and creates one otherwise. Set `github_comment_mode=create` on a diagnosis
+request only when a fresh comment is explicitly desired.
 The Go server also asks Kubernetes for at most
 `NOVA_SRE_RUNNER_LOG_LIMIT_BYTES` bytes per runner pod container before sending
 logs to the agent, keeping raw log collection bounded at the source.
