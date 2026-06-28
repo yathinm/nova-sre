@@ -6,7 +6,7 @@ GOVULNCHECK_VERSION ?= v1.5.0
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        set-production-images sync-k8s-secret validate-secret-sync validate-metrics validate-api-cors validate-k8s validate-production-k8s validate-release-tools validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-local-webhook validate-webhook-tunnel run-server run-frontend all-local \
+        set-production-images prepare-production-release sync-k8s-secret validate-secret-sync validate-metrics validate-api-cors validate-k8s validate-production-k8s validate-release-tools validate-release-command validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-local-webhook validate-webhook-tunnel run-server run-frontend all-local \
         test-go lint-go audit-go test-agent lint-agent audit-frontend audit-deps
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
@@ -126,6 +126,9 @@ validate-production-k8s: ## Validate production overlay security-sensitive wirin
 set-production-images: ## Stamp production overlay images with RELEASE_TAG and optional PRODUCTION_IMAGE_REGISTRY
 	ruby scripts/set-production-images.rb
 
+prepare-production-release: ## Stamp production images and run release preflight checks
+	ruby scripts/prepare-production-release.rb
+
 sync-k8s-secret: ## Apply nova-sre-secrets from exported environment variables
 	ruby scripts/sync-k8s-secret.rb
 
@@ -135,12 +138,17 @@ validate-secret-sync: ## Validate the Kubernetes secret sync helper
 validate-release-tools: ## Validate release helper scripts
 	ruby scripts/validate-release-tools.rb
 
+validate-release-command: ## Validate the production release preflight command
+	ruby scripts/validate-release-command.rb
+
 validate-scripts: ## Validate repository Ruby helper scripts
 	ruby -c scripts/validate-k8s-yaml.rb
 	ruby -c scripts/validate-production-k8s.rb
 	ruby -c scripts/set-production-images.rb
+	ruby -c scripts/prepare-production-release.rb
 	ruby -c scripts/sync-k8s-secret.rb
 	ruby -c scripts/validate-release-tools.rb
+	ruby -c scripts/validate-release-command.rb
 	ruby -c scripts/validate-secret-sync.rb
 	ruby -c scripts/validate-cluster-runtime.rb
 	ruby -c scripts/validate-local-runtime.rb

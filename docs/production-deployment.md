@@ -26,7 +26,8 @@ Before applying it to a real cluster:
 - Confirm the ingress controller supports `ingressClassName: nginx`, or change
   it to the target cluster's ingress class.
 - Replace the `images` entries in `k8s/overlays/production/kustomization.yaml`
-  with the target registry and immutable release tag.
+  with the target registry and immutable release tag by running
+  `PRODUCTION_IMAGE_REGISTRY=... RELEASE_TAG=... make prepare-production-release`.
 - Set `NOVA_SRE_ALLOWED_ORIGINS` in `nova-sre-secrets` to the final HTTPS
   frontend origin, for example `https://nova-sre.example.com`.
 - Set `NOVA_SRE_API_TOKEN` for the control-panel API before exposing `/api/*`

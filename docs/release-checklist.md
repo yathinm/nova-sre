@@ -49,9 +49,12 @@ Stamp the production overlay with the target registry and release tag:
 ```sh
 PRODUCTION_IMAGE_REGISTRY=registry.example.com/nova-sre \
   RELEASE_TAG=RELEASE_TAG \
-  make set-production-images
-make validate-release-tools
+  make prepare-production-release
 ```
+
+This stamps `k8s/overlays/production/kustomization.yaml`, validates release
+tooling, scans tracked files for committed secrets, and validates the production
+overlay security-sensitive wiring.
 
 ## 3. Environment Configuration
 
