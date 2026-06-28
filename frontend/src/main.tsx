@@ -5,6 +5,7 @@ import "./styles.css";
 declare global {
   interface Window {
     NOVA_SRE_API_BASE?: string;
+    NOVA_SRE_API_TOKEN?: string;
   }
 }
 
@@ -37,6 +38,7 @@ type ApiError = Error & { status?: number };
 
 function App() {
   const [apiBase, setApiBase] = useState(initialApiBase);
+  const [apiToken, setApiToken] = useState(initialApiToken);
   const [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -67,7 +69,7 @@ function App() {
     updatedAt: null,
   });
 
-  const client = useMemo(() => createClient(apiBase), [apiBase]);
+  const client = useMemo(() => createClient(apiBase, apiToken), [apiBase, apiToken]);
 
   const refresh = useCallback(async () => {
     if (isRefreshingRef.current) {
@@ -77,6 +79,7 @@ function App() {
     const nextApiBase = trimTrailingSlash(apiBase || DEFAULT_API_BASE);
     setApiBase(nextApiBase);
     window.localStorage.setItem("novaSreApiBase", nextApiBase);
+    window.localStorage.setItem("novaSreApiToken", apiToken);
     setNotice("");
     setRefreshing(true);
     setEvents((current) => ({ ...current, message: "Loading recent webhook deliveries...", status: "loading" }));
@@ -113,7 +116,7 @@ function App() {
       setRefreshing(false);
       isRefreshingRef.current = false;
     }
-  }, [apiBase, client]);
+  }, [apiBase, apiToken, client]);
 
   useEffect(() => {
     void refresh();
@@ -160,6 +163,16 @@ function App() {
               {refreshing ? "..." : "↻"}
             </button>
           </div>
+          <label htmlFor="api-token">API token</label>
+          <input
+            id="api-token"
+            type="password"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Optional"
+            value={apiToken}
+            onChange={(event) => setApiToken(event.target.value)}
+          />
           <div className="refresh-row">
             <span>{lastRefreshAt ? `Updated ${formatTime(lastRefreshAt, "time")}` : "Waiting for first refresh"}</span>
             <label className="pause-toggle">
@@ -341,17 +354,28 @@ function initialApiBase() {
   return trimTrailingSlash(configured || saved || DEFAULT_API_BASE);
 }
 
+function initialApiToken() {
+  const configured = String(window.NOVA_SRE_API_TOKEN || "").trim();
+  const saved = window.localStorage.getItem("novaSreApiToken");
+  return configured || saved || "";
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
 
-function createClient(apiBase: string) {
+function createClient(apiBase: string, apiToken: string) {
   const base = trimTrailingSlash(apiBase || DEFAULT_API_BASE);
+  const token = apiToken.trim();
+  const headers = (accept: string) => ({
+    Accept: accept,
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  });
   return {
     async text(path: string) {
       const response = await fetch(`${base}${path}`, {
         cache: "no-store",
-        headers: { Accept: "text/plain, */*" },
+        headers: headers("text/plain, */*"),
       });
       if (!response.ok) {
         throw new Error(`${response.status} ${response.statusText}`.trim());
@@ -361,7 +385,7 @@ function createClient(apiBase: string) {
     async json(path: string) {
       const response = await fetch(`${base}${path}`, {
         cache: "no-store",
-        headers: { Accept: "application/json" },
+        headers: headers("application/json"),
       });
       if (!response.ok) {
         const error = new Error(`${response.status} ${response.statusText}`.trim()) as ApiError;

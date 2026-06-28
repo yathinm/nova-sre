@@ -352,6 +352,50 @@ func TestAPIOptionsIncludeWebhookHeaders(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "X-Hub-Signature-256") {
 		t.Fatalf("expected webhook signature header to be allowed, got %q", got)
 	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, apiTokenHeader) || !strings.Contains(got, "Authorization") {
+		t.Fatalf("expected API auth headers to be allowed, got %q", got)
+	}
+}
+
+func TestAPIRequiresTokenWhenConfigured(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIToken("control-panel-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestAPIAcceptsBearerToken(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIToken("control-panel-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.Header.Set("Authorization", "Bearer control-panel-token")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIAcceptsTokenHeader(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIToken("control-panel-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.Header.Set(apiTokenHeader, "control-panel-token")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
 }
 
 func TestWebhookRejectsUnsupportedEvent(t *testing.T) {

@@ -38,6 +38,7 @@ func main() {
 		}
 	}
 	server := NewServerWithRunnerAndActivity(os.Getenv("GITHUB_WEBHOOK_SECRET"), jobRunner, activity)
+	server.SetAPIToken(os.Getenv("NOVA_SRE_API_TOKEN"))
 	if creator, ok := jobRunner.Creator.(runner.KubernetesJobCreator); ok {
 		server.SetKubernetesJobLister(creator.Jobs)
 	}

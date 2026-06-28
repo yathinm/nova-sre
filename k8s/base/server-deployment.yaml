@@ -31,6 +31,12 @@ spec:
                 secretKeyRef:
                   name: nova-sre-secrets
                   key: GITHUB_TOKEN
+            - name: NOVA_SRE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_API_TOKEN
+                  optional: true
             - name: NOVA_SRE_AGENT_URL
               value: http://nova-sre-agent.nova-sre.svc.cluster.local:8000
             - name: RUNNER_JOB_TTL_SECONDS
