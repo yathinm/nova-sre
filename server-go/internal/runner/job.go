@@ -484,11 +484,25 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 		ObservedTime: r.now(),
 	}
 	if err := r.Agent.Diagnose(ctx, request); err != nil {
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "diagnosis_error",
+			Namespace: job.Namespace,
+			JobName:   job.Name,
+			Reason:    "DiagnosisRequestFailed",
+			Message:   err.Error(),
+		})
 		r.logf("failed to send diagnosis request namespace=%s name=%s delivery=%s event=%s: %v",
 			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
 		return
 	}
 
+	r.observeJob(event, metadata, JobStatusUpdate{
+		Status:    "diagnosed",
+		Namespace: job.Namespace,
+		JobName:   job.Name,
+		Reason:    result.Reason,
+		Message:   result.Message,
+	})
 	r.logf("sent diagnosis request namespace=%s name=%s delivery=%s event=%s logs=%d",
 		job.Namespace, job.Name, event.DeliveryID, event.Type, len(logs))
 }

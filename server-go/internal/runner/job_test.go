@@ -231,6 +231,7 @@ func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 
 func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	agent := &recordingAgent{}
+	observer := &recordingObserver{}
 	runner := JobRunner{
 		Watcher: &recordingWatcher{
 			result: JobResult{
@@ -246,7 +247,8 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 				Logs:      "panic: missing config",
 			}},
 		},
-		Agent: agent,
+		Agent:    agent,
+		Observer: observer,
 		Now: func() time.Time {
 			return time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 		},
@@ -294,6 +296,9 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	if agent.request.Reason != "BackoffLimitExceeded" || agent.request.Message != "runner exited 1" {
 		t.Fatalf("expected failure details, got reason=%q message=%q", agent.request.Reason, agent.request.Message)
 	}
+	if got := observer.last().Status; got != "diagnosed" {
+		t.Fatalf("expected final observed status diagnosed, got %q in %#v", got, observer.updates)
+	}
 }
 
 func TestJobRunnerSkipsAgentForSuccessfulJob(t *testing.T) {
@@ -316,10 +321,12 @@ func TestJobRunnerSkipsAgentForSuccessfulJob(t *testing.T) {
 
 func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
 	agent := &recordingAgent{err: errors.New("agent unavailable")}
+	observer := &recordingObserver{}
 	runner := JobRunner{
 		Watcher:      &recordingWatcher{result: JobResult{Failed: true}},
 		LogCollector: &recordingLogCollector{logs: []LogEntry{{Logs: "failed"}}},
 		Agent:        agent,
+		Observer:     observer,
 		Logger:       log.New(io.Discard, "", 0),
 	}
 
@@ -329,6 +336,10 @@ func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
 
 	if !agent.called {
 		t.Fatal("expected best-effort agent call")
+	}
+	update := observer.last()
+	if update.Status != "diagnosis_error" || update.Reason != "DiagnosisRequestFailed" {
+		t.Fatalf("expected diagnosis error observation, got %#v", update)
 	}
 }
 
@@ -498,6 +509,21 @@ func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) er
 	a.called = true
 	a.request = request
 	return a.err
+}
+
+type recordingObserver struct {
+	updates []JobStatusUpdate
+}
+
+func (o *recordingObserver) ObserveJob(update JobStatusUpdate) {
+	o.updates = append(o.updates, update)
+}
+
+func (o *recordingObserver) last() JobStatusUpdate {
+	if len(o.updates) == 0 {
+		return JobStatusUpdate{}
+	}
+	return o.updates[len(o.updates)-1]
 }
 
 func sequenceClock(times ...time.Time) func() time.Time {
