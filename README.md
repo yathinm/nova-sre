@@ -224,6 +224,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    - The Go orchestrator creates a Kubernetes Job in Minikube.
    - The runner Job receives normalized GitHub context environment variables
      for common push, pull request, and workflow run fields.
+   - Event-specific runner command overrides can select different behavior for
+     push, pull request, and workflow run events.
    - The job emits logs and metrics for collection.
    - The Go server keeps a bounded local activity snapshot for recent events and
      jobs.

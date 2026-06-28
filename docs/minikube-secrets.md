@@ -42,6 +42,9 @@ The server deployment also sets:
 NOVA_SRE_AGENT_URL=http://nova-sre-agent.nova-sre.svc.cluster.local:8000
 NOVA_SRE_AGENT_TOKEN=<from nova-sre-secrets when configured>
 RUNNER_JOB_TTL_SECONDS=900
+RUNNER_JOB_COMMAND_PUSH=<optional push command>
+RUNNER_JOB_COMMAND_PULL_REQUEST=<optional pull request command>
+RUNNER_JOB_COMMAND_WORKFLOW_RUN=<optional workflow run command>
 NOVA_SRE_ACTIVITY_LIMIT=200
 NOVA_SRE_ACTIVITY_STORE_PATH=/var/lib/nova-sre/activity.json
 NOVA_SRE_DELIVERY_CACHE_TTL=15m
@@ -65,6 +68,11 @@ Generated runner Jobs use conservative default resources for local Minikube:
 `RUNNER_JOB_CPU_LIMIT=500m`, and `RUNNER_JOB_MEMORY_LIMIT=256Mi`. Add those
 environment variables to `k8s/base/server-deployment.yaml` only when a local
 test needs different runner sizing.
+
+Runner command selection uses the event-specific command first, then the global
+`RUNNER_JOB_COMMAND`, then the default diagnostic echo command. The supported
+event-specific variables are `RUNNER_JOB_COMMAND_PUSH`,
+`RUNNER_JOB_COMMAND_PULL_REQUEST`, and `RUNNER_JOB_COMMAND_WORKFLOW_RUN`.
 
 The agent truncates normalized submitted logs to `NOVA_SRE_MAX_LOG_CHARS` before
 classification and optional LLM prompting. The default keeps diagnosis payloads

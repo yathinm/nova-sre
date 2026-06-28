@@ -159,18 +159,20 @@ func TestBuildGitHubEventJobRequiresRunnerImage(t *testing.T) {
 
 func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 	values := map[string]string{
-		"RUNNER_JOB_NAMESPACE":       "runner-jobs",
-		"RUNNER_JOB_IMAGE":           "ghcr.io/example/nova-runner:test",
-		"RUNNER_REPO":                "acme/widgets",
-		"RUNNER_SHA":                 "abcdef",
-		"RUNNER_JOB_COMMAND":         "/bin/runner --once",
-		"RUNNER_JOB_TTL_SECONDS":     "900",
-		"RUNNER_JOB_BACKOFF_LIMIT":   "2",
-		"RUNNER_JOB_SERVICE_ACCOUNT": "nova-runner",
-		"RUNNER_JOB_CPU_REQUEST":     "150m",
-		"RUNNER_JOB_MEMORY_REQUEST":  "160Mi",
-		"RUNNER_JOB_CPU_LIMIT":       "750m",
-		"RUNNER_JOB_MEMORY_LIMIT":    "384Mi",
+		"RUNNER_JOB_NAMESPACE":            "runner-jobs",
+		"RUNNER_JOB_IMAGE":                "ghcr.io/example/nova-runner:test",
+		"RUNNER_REPO":                     "acme/widgets",
+		"RUNNER_SHA":                      "abcdef",
+		"RUNNER_JOB_COMMAND":              "/bin/runner --once",
+		"RUNNER_JOB_COMMAND_PULL_REQUEST": "/bin/runner --pull-request",
+		"RUNNER_JOB_COMMAND_WORKFLOW_RUN": "/bin/runner --workflow-run",
+		"RUNNER_JOB_TTL_SECONDS":          "900",
+		"RUNNER_JOB_BACKOFF_LIMIT":        "2",
+		"RUNNER_JOB_SERVICE_ACCOUNT":      "nova-runner",
+		"RUNNER_JOB_CPU_REQUEST":          "150m",
+		"RUNNER_JOB_MEMORY_REQUEST":       "160Mi",
+		"RUNNER_JOB_CPU_LIMIT":            "750m",
+		"RUNNER_JOB_MEMORY_LIMIT":         "384Mi",
 	}
 
 	config := JobConfigFromEnv(func(name string) string {
@@ -185,6 +187,12 @@ func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 	}
 	if got := config.Command; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--once" {
 		t.Fatalf("unexpected command: %#v", got)
+	}
+	if got := config.CommandByEvent["pull_request"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--pull-request" {
+		t.Fatalf("unexpected pull_request command override: %#v", got)
+	}
+	if got := config.CommandByEvent["workflow_run"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--workflow-run" {
+		t.Fatalf("unexpected workflow_run command override: %#v", got)
 	}
 	if config.TTLSecondsFinished == nil || *config.TTLSecondsFinished != 900 {
 		t.Fatalf("expected ttl 900, got %#v", config.TTLSecondsFinished)
@@ -219,6 +227,50 @@ func TestJobConfigFromEnvFallsBackForInvalidRunnerResources(t *testing.T) {
 
 	if got := config.Resources.Requests.Cpu().String(); got != defaultRunnerCPURequest {
 		t.Fatalf("expected default cpu request %q, got %q", defaultRunnerCPURequest, got)
+	}
+}
+
+func TestBuildGitHubEventJobUsesEventCommandOverride(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByEvent: map[string][]string{
+			"pull_request": {"/bin/runner", "--pull-request"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "pull_request",
+		Body:       []byte(`{"pull_request":{"head":{"sha":"abc","repo":{"full_name":"acme/widgets"}}}}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--pull-request" {
+		t.Fatalf("expected event-specific command, got %#v", command)
+	}
+}
+
+func TestBuildGitHubEventJobFallsBackToGlobalCommand(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByEvent: map[string][]string{
+			"pull_request": {"/bin/runner", "--pull-request"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "push",
+		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abc"}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--default" {
+		t.Fatalf("expected global command fallback, got %#v", command)
 	}
 }
 
