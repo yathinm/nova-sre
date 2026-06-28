@@ -230,6 +230,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make port-forward-prometheus` | Forwards `svc/prometheus-server` in namespace `observability` to `localhost:9090`. |
 | `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
 | `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
+| `make validate-api-cors` | Checks browser CORS headers on `/healthz`, `/metrics`, and `/api/config`. |
 | `make run-server` | Runs the Go API locally on `localhost:8080`. |
 | `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
 | `make test-go` | Runs Go tests under `server-go/`. |
