@@ -137,6 +137,9 @@ make validate-local-webhook
 The command uses `GITHUB_WEBHOOK_SECRET` when set, otherwise it reads the
 `GITHUB_WEBHOOK_SECRET` key from the local `nova-sre-secrets` Kubernetes secret
 without printing it.
+It verifies that invalid signatures are rejected, signed `ping` deliveries are
+accepted, duplicate delivery IDs are surfaced as duplicates, and `/api/summary`
+reflects the new webhook activity.
 
 ## Webhook Delivery Troubleshooting
 

@@ -73,8 +73,8 @@ management, and a more complete operator control surface.
   pipeline dashboard ConfigMap.
 - Grafana admin password is generated instead of hardcoded.
 - Go, Python, frontend, Kubernetes, Terraform, Docker image, script syntax,
-  dependency audit, secret-scan, local runtime, cluster runtime, tunnel, and
-  observability validation commands exist.
+  dependency audit, secret-scan, local runtime, signed webhook, cluster
+  runtime, tunnel, and observability validation commands exist.
 
 ## Live Local Runtime
 
