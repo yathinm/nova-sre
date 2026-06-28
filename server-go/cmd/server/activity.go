@@ -80,7 +80,10 @@ func (s *activityStore) recordReceived(event githubEvent) {
 		return
 	}
 	metadata := webhookMetadata(event.Body)
-	now := s.timestamp()
+	now := event.ReceivedAt.UTC()
+	if now.IsZero() {
+		now = s.timestamp()
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

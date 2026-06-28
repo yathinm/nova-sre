@@ -97,7 +97,8 @@ def test_diagnose_endpoint_uses_safe_fallback_for_empty_logs() -> None:
     assert "```log\nNo log excerpt was available for this diagnosis.\n```" in body["pr_comment"]
 
 
-def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata() -> None:
+def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(github_comment_client, "token", None)
     client = TestClient(app)
 
     response = client.post(
@@ -153,13 +154,70 @@ def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata() -> None
             "base": "main",
         },
         "observed_time": "2026-06-27T12:34:56Z",
-        "github_owner": None,
-        "github_repo": None,
+        "github_owner": "acme",
+        "github_repo": "widgets",
         "github_pr_number": 42,
     }
     assert body["result"]["links"] == [
-        {"label": "pull_request", "url": "https://github.com/acme/widgets/pull/42"}
+        {"label": "pull_request", "url": "https://github.com/acme/widgets/pull/42"},
+        {"label": "github_pull_request", "url": "https://github.com/acme/widgets/pull/42"},
     ]
+    assert body["github_owner"] == "acme"
+    assert body["github_repo"] == "widgets"
+    assert body["github_pr_number"] == 42
+    assert body["github_comment_error"] == (
+        "GITHUB_TOKEN is not set; skipped GitHub PR comment posting."
+    )
+
+
+def test_diagnose_endpoint_posts_comment_from_runner_repository_metadata(monkeypatch) -> None:
+    async def post_comment(
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str,
+        mode: GitHubCommentMode = "upsert",
+    ):
+        assert owner == "acme"
+        assert repo == "widgets"
+        assert pr_number == 42
+        assert "runner crashed" in body
+        assert mode == "upsert"
+        return type(
+            "GitHubResult",
+            (),
+            {
+                "posted": True,
+                "url": "https://github.com/acme/widgets/pull/42#comment",
+                "error": None,
+                "action": "created",
+            },
+        )()
+
+    monkeypatch.setattr(github_comment_client, "post_comment", post_comment)
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-post",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "pull_request": {
+                "number": 42,
+                "url": "https://github.com/acme/widgets/pull/42",
+            },
+            "logs": "ERROR runner crashed",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["github_comment_posted"] is True
+    assert body["github_comment_url"] == "https://github.com/acme/widgets/pull/42#comment"
+    assert body["github_comment_action"] == "created"
 
 
 def test_diagnose_endpoint_neutralizes_nested_fences_in_logs() -> None:

@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
@@ -119,6 +120,9 @@ class DiagnosisRequest(BaseModel):
         run_id = self.run_id or self.delivery_id or self.job_name or "unknown-run"
         pull_request = self.pull_request
         github_pr_number = self.github_pr_number or (pull_request.number if pull_request else None)
+        inferred_owner, inferred_repo = _github_repository_parts(repo, pull_request)
+        github_owner = self.github_owner or inferred_owner
+        github_repo = self.github_repo or inferred_repo
 
         return {
             "run_id": run_id,
@@ -133,8 +137,8 @@ class DiagnosisRequest(BaseModel):
             "message": self.message,
             "pull_request": pull_request,
             "observed_time": self.observed_time,
-            "github_owner": self.github_owner,
-            "github_repo": self.github_repo,
+            "github_owner": github_owner,
+            "github_repo": github_repo,
             "github_pr_number": github_pr_number,
         }
 
@@ -235,6 +239,36 @@ def _repo_from_github_metadata(request: DiagnosisRequest) -> str | None:
     if request.github_owner and request.github_repo:
         return f"{request.github_owner}/{request.github_repo}"
     return None
+
+
+def _github_repository_parts(
+    repo: str | None,
+    pull_request: PullRequestMetadata | None,
+) -> tuple[str | None, str | None]:
+    if repo_parts := _split_github_repository(repo):
+        return repo_parts
+    if pull_request and pull_request.url:
+        return _github_repository_parts_from_url(pull_request.url)
+    return None, None
+
+
+def _split_github_repository(repo: str | None) -> tuple[str, str] | None:
+    if not repo:
+        return None
+    parts = [part.strip() for part in repo.strip().split("/")]
+    if len(parts) != 2 or not all(parts):
+        return None
+    return parts[0], parts[1]
+
+
+def _github_repository_parts_from_url(url: str) -> tuple[str | None, str | None]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != "github.com":
+        return None, None
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) >= 4 and path_parts[2] == "pull":
+        return path_parts[0], path_parts[1]
+    return None, None
 
 
 def _diagnosis_status(state: DiagnosisState) -> str:

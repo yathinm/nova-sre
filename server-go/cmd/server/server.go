@@ -208,6 +208,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		DeliveryID: deliveryID,
 		Event:      event,
 		Body:       body,
+		ReceivedAt: time.Now().UTC(),
 	}
 	s.activity.recordReceived(eventPayload)
 
@@ -295,6 +296,7 @@ type githubEvent struct {
 	DeliveryID string
 	Event      string
 	Body       []byte
+	ReceivedAt time.Time
 }
 
 type githubEventEnqueuer func(context.Context, githubEvent) error
@@ -315,6 +317,7 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 			DeliveryID: event.DeliveryID,
 			Type:       event.Event,
 			Body:       event.Body,
+			ReceivedAt: event.ReceivedAt,
 		})
 	}
 }

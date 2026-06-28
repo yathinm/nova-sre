@@ -66,6 +66,35 @@ func TestWebhookAcceptsSignedSupportedEvent(t *testing.T) {
 	}
 }
 
+func TestWebhookPreservesReceivedAtForRunnerAndActivity(t *testing.T) {
+	activity := newActivityStore(10)
+	captured := &capturingEventRunner{}
+	server := NewServerWithRunnerAndActivity("", captured, activity)
+	req := webhookRequest([]byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef"}`), "delivery-1", "push")
+	before := time.Now().UTC()
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+	after := time.Now().UTC()
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+	if captured.event.ReceivedAt.IsZero() {
+		t.Fatal("expected runner event to include received_at")
+	}
+	if captured.event.ReceivedAt.Before(before) || captured.event.ReceivedAt.After(after) {
+		t.Fatalf("expected runner received_at between %s and %s, got %s", before, after, captured.event.ReceivedAt)
+	}
+	records := activity.recent(10)
+	if len(records) != 1 {
+		t.Fatalf("expected one activity record, got %#v", records)
+	}
+	if !records[0].ReceivedAt.Equal(captured.event.ReceivedAt) {
+		t.Fatalf("expected activity and runner received_at to match, activity=%s runner=%s", records[0].ReceivedAt, captured.event.ReceivedAt)
+	}
+}
+
 func TestWebhookRejectsInvalidSignature(t *testing.T) {
 	server := NewServer("top-secret")
 	req := webhookRequest([]byte(`{"ok":true}`), "delivery-1", "ping")
@@ -815,6 +844,15 @@ func TestHTTPServerFromEnvOverrides(t *testing.T) {
 	if server.IdleTimeout != 4*time.Second {
 		t.Fatalf("expected idle timeout 4s, got %s", server.IdleTimeout)
 	}
+}
+
+type capturingEventRunner struct {
+	event runner.Event
+}
+
+func (r *capturingEventRunner) EnqueueGitHubEvent(_ context.Context, event runner.Event) error {
+	r.event = event
+	return nil
 }
 
 func webhookRequest(body []byte, deliveryID string, event string) *http.Request {

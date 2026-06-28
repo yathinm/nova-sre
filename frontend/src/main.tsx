@@ -36,6 +36,7 @@ type ListState<T> = {
 type ListResult = Omit<ListState<ApiRecord>, "updatedAt">;
 type ApiRecord = Record<string, unknown>;
 type ApiError = Error & { status?: number };
+type CommentAction = "created" | "updated" | "skipped" | "failed";
 type ActivitySummaryState = {
   total: number;
   byStatus: Record<string, number>;
@@ -104,6 +105,7 @@ function App() {
     status: "idle",
     updatedAt: null,
   });
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfig | null>(null);
 
   const client = useMemo(() => createClient(apiBase, apiToken), [apiBase, apiToken]);
 
@@ -127,7 +129,7 @@ function App() {
       const [healthOk, , , summary, eventList, jobList] = await Promise.all([
         loadHealth(client, setHealthCard),
         loadMetrics(client, setMetricsCard),
-        loadRuntimeConfig(client, setRuntimeCard),
+        loadRuntimeConfig(client, setRuntimeCard, setRuntimeConfig),
         loadActivitySummary(client),
         loadList(client, "events", ENDPOINTS.events),
         loadList(client, "jobs", ENDPOINTS.jobs),
@@ -266,6 +268,7 @@ function App() {
 
       <section className="content-grid">
         <BreakdownPanel summary={activitySummary} />
+        <CommentControlPanel config={runtimeConfig} jobs={jobs.items} status={jobs.status} />
         <DataPanel
           eyebrow="GitHub Webhooks"
           title="Recent Events"
@@ -303,6 +306,72 @@ function App() {
         />
       </section>
     </main>
+  );
+}
+
+function CommentControlPanel({ config, jobs, status }: { config: RuntimeConfig | null; jobs: ApiRecord[]; status: LoadStatus }) {
+  const mode = optionalText(config?.github_comment_mode) || "upsert";
+  const commentJobs = jobs.filter(hasCommentSignal);
+  const counts = commentActionCounts(commentJobs);
+  const latest = commentJobs[0];
+  const latestUrl = latest ? githubCommentURL(latest) : "";
+  const latestAction = latest ? githubCommentAction(latest) || "observed" : "";
+  const latestError = latest ? optionalText(latest.github_comment_error) : "";
+  const failureCount = commentJobs.filter(isCommentFailure).length;
+  const hasLoadedJobs = status === "ready" || status === "empty";
+
+  return (
+    <section className="panel comment-controls">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">GitHub PR Comments</p>
+          <h2>Comment Controls</h2>
+        </div>
+        <div className="panel-meta">
+          <span className="source-label">/api/config + /api/jobs</span>
+        </div>
+      </div>
+      <div className="comment-control-grid">
+        <CommentControlCard label="Mode" value={statusLabel(mode)} detail={commentModeDetail(mode)} tone={mode === "create" ? "warn" : "ok"} />
+        <CommentControlCard label="Posted" value={String(counts.created + counts.updated)} detail="Created or updated comments" tone="ok" />
+        <CommentControlCard label="Skipped" value={String(counts.skipped)} detail="Missing token, metadata, or disabled path" tone={counts.skipped ? "warn" : undefined} />
+        <CommentControlCard label="Failed" value={String(failureCount)} detail="Permission, lookup, or API failures" tone={failureCount ? "error" : "ok"} />
+      </div>
+      {latest ? (
+        <div className={latestError || isCommentFailure(latest) ? "comment-latest error" : "comment-latest"}>
+          <div>
+            <strong>{latestAction ? `${statusLabel(latestAction)} most recent PR comment action` : "Most recent PR comment action"}</strong>
+            <span>{latestError || jobDetail(latest)}</span>
+          </div>
+          {latestUrl ? (
+            <a href={latestUrl} target="_blank" rel="noreferrer" className="detail-link">
+              Open latest comment
+            </a>
+          ) : null}
+        </div>
+      ) : (
+        <div className="comment-latest empty">
+          <div>
+            <strong>{hasLoadedJobs ? "No PR comment activity yet" : "Waiting for runner jobs"}</strong>
+            <span>Failed PR diagnoses will report created, updated, skipped, or failed comment actions here.</span>
+          </div>
+        </div>
+      )}
+      <p className="control-hint">
+        Use <code>NOVA_SRE_GITHUB_COMMENT_MODE=upsert</code> to keep one marked diagnosis comment current, or <code>create</code> when each
+        failed diagnosis should leave a separate PR comment.
+      </p>
+    </section>
+  );
+}
+
+function CommentControlCard({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: Tone }) {
+  return (
+    <article className={["comment-control-card", tone].filter(Boolean).join(" ")}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
   );
 }
 
@@ -570,10 +639,11 @@ async function loadMetrics(client: ReturnType<typeof createClient>, setCard: (ca
   }
 }
 
-async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCard: (card: CardState) => void) {
+async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCard: (card: CardState) => void, setConfig: (config: RuntimeConfig | null) => void) {
   try {
     const payload = await client.json("/api/config");
     const config = isRecord(payload) ? (payload as RuntimeConfig) : {};
+    setConfig(config);
     const authLabel = config.api_auth_enabled ? "Token" : "Open";
     const agentLabel = config.agent_auth_enabled ? "agent auth" : "agent open";
     const corsLabel = config.api_cors_restricted ? "restricted CORS" : "wildcard CORS";
@@ -591,6 +661,7 @@ async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCar
     });
   } catch (error) {
     const apiError = error as ApiError;
+    setConfig(null);
     setCard({
       label: "Runtime",
       value: apiError.status === 404 ? "Legacy" : "Unavailable",
@@ -716,6 +787,11 @@ function textValue(...values: unknown[]) {
   return value === undefined ? "Unknown" : String(value);
 }
 
+function optionalText(...values: unknown[]) {
+  const value = values.find((candidate) => candidate !== undefined && candidate !== null && String(candidate).trim() !== "");
+  return value === undefined ? "" : String(value);
+}
+
 function toneForStatus(status: string) {
   if (["ok", "accepted", "success", "succeeded", "complete", "completed", "running", "active", "diagnosed"].includes(status)) {
     return "ok";
@@ -731,17 +807,50 @@ function jobDetail(item: ApiRecord) {
 }
 
 function githubCommentURL(item: ApiRecord) {
-  const explicit = textValue(item.github_comment_url, "");
+  const explicit = optionalText(item.github_comment_url);
   if (isGitHubURL(explicit)) {
     return explicit;
   }
-  const message = textValue(item.message, "");
+  const message = optionalText(item.message);
   return isGitHubURL(message) ? message : "";
 }
 
 function githubCommentAction(item: ApiRecord) {
-  const action = textValue(item.github_comment_action, item.reason, "");
+  const action = optionalText(item.github_comment_action, item.reason);
   return ["created", "updated", "skipped", "failed"].includes(action.trim().toLowerCase()) ? action : "";
+}
+
+function hasCommentSignal(item: ApiRecord) {
+  return Boolean(
+    optionalText(item.github_comment_action, item.github_comment_url, item.github_comment_error) ||
+      typeof item.github_comment_posted === "boolean" ||
+      optionalText(item.status).includes("diagnosis_comment"),
+  );
+}
+
+function commentActionCounts(items: ApiRecord[]): Record<CommentAction, number> {
+  return items.reduce<Record<CommentAction, number>>(
+    (counts, item) => {
+      const action = githubCommentAction(item).trim().toLowerCase();
+      if (isCommentAction(action)) {
+        counts[action] += 1;
+      }
+      return counts;
+    },
+    { created: 0, updated: 0, skipped: 0, failed: 0 },
+  );
+}
+
+function isCommentAction(action: string): action is CommentAction {
+  return action === "created" || action === "updated" || action === "skipped" || action === "failed";
+}
+
+function isCommentFailure(item: ApiRecord) {
+  return githubCommentAction(item).trim().toLowerCase() === "failed" || optionalText(item.status).trim().toLowerCase() === "diagnosis_comment_error";
+}
+
+function commentModeDetail(mode: string) {
+  return mode.trim().toLowerCase() === "create" ? "Create a fresh comment for every diagnosis" : "Update the marked Nova-SRE comment when present";
 }
 
 function isGitHubURL(value: string) {

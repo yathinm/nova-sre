@@ -304,6 +304,110 @@ h2 {
   grid-column: 1 / -1;
 }
 
+.comment-controls {
+  grid-column: 1 / -1;
+}
+
+.comment-control-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+}
+
+.comment-control-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.comment-control-card span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.comment-control-card strong {
+  display: block;
+  margin: 10px 0 5px;
+  font-size: 1.35rem;
+}
+
+.comment-control-card small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.comment-control-card.ok {
+  border-color: #b9dec9;
+  background: var(--soft-good);
+}
+
+.comment-control-card.warn {
+  border-color: #f4d195;
+  background: var(--soft-warn);
+}
+
+.comment-control-card.error {
+  border-color: #f2b8b5;
+  background: var(--soft-bad);
+}
+
+.comment-latest {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  margin: 0 18px 18px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.comment-latest div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.comment-latest strong {
+  font-size: 0.95rem;
+}
+
+.comment-latest span {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.comment-latest.error {
+  color: #663c00;
+  border-color: #f1c78b;
+  background: #fff8eb;
+}
+
+.comment-latest.empty {
+  background: #fbfcfd;
+}
+
+.control-hint {
+  margin: 0;
+  padding: 0 18px 18px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.control-hint code {
+  color: var(--accent-strong);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .breakdown-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -493,6 +597,10 @@ tbody tr:last-child td {
   .breakdown-grid {
     grid-template-columns: 1fr;
   }
+
+  .comment-control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 560px) {
@@ -519,6 +627,15 @@ tbody tr:last-child td {
     align-items: start;
     justify-items: start;
     max-width: 100%;
+  }
+
+  .comment-control-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .comment-latest {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .source-label {

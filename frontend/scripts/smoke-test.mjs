@@ -21,6 +21,9 @@ const checks = [
   ["runtime comment mode status", "github_comment_mode"],
   ["job detail comment link", "function JobDetailValue"],
   ["github comment url guard", "function githubCommentURL"],
+  ["comment controls panel", "function CommentControlPanel"],
+  ["comment action counts", "function commentActionCounts"],
+  ["comment mode guidance", "NOVA_SRE_GITHUB_COMMENT_MODE=upsert"],
 ];
 
 const failures = checks

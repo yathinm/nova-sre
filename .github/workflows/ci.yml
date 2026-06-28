@@ -22,6 +22,7 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     outputs:
+      all-changes: ${{ steps.filter.outputs.all-changes }}
       server-go: ${{ steps.filter.outputs.server-go }}
       agent-python: ${{ steps.filter.outputs.agent-python }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -38,6 +39,8 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            all-changes:
+              - '**'
             server-go:
               - '.github/workflows/ci.yml'
               - 'server-go/**'
@@ -221,6 +224,15 @@ jobs:
 
       - name: Validate release tooling
         run: make validate-release-tools
+
+  secrets:
+    name: Secret scan
+    needs: changes
+    if: needs.changes.outputs.all-changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Scan tracked files for committed secrets
         run: make validate-secrets

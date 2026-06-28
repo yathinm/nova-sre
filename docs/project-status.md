@@ -110,7 +110,7 @@ CI currently gates:
 - Terraform validation.
 - Docker image builds for server, agent, and frontend.
 - Ruby helper syntax checks.
-- Tracked-file secret scanning.
+- Tracked-file secret scanning on every repository change.
 
 ## Remaining MVP Work
 

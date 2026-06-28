@@ -87,4 +87,4 @@ async def diagnose(
 
 
 def _has_pr_metadata(state: DiagnosisState) -> bool:
-    return bool(state.github_owner or state.github_repo or state.github_pr_number)
+    return bool(state.github_owner and state.github_repo and state.github_pr_number)
