@@ -384,6 +384,20 @@ func TestAPIAcceptsBearerToken(t *testing.T) {
 	}
 }
 
+func TestAPIRejectsWrongLengthBearerToken(t *testing.T) {
+	server := NewServer("")
+	server.SetAPIToken("control-panel-token")
+	req := httptest.NewRequest(http.MethodGet, "/api/events", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
 func TestAPIAcceptsTokenHeader(t *testing.T) {
 	server := NewServer("")
 	server.SetAPIToken("control-panel-token")
