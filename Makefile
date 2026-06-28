@@ -6,7 +6,7 @@ GOVULNCHECK_VERSION ?= v1.5.0
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        set-production-images prepare-production-release sync-k8s-secret validate-secret-sync validate-metrics validate-api-cors validate-k8s validate-production-k8s validate-release-tools validate-release-command validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-local-webhook validate-webhook-tunnel local-up local-down local-status run-server run-frontend all-local \
+        set-production-images prepare-production-release sync-k8s-secret validate-secret-sync validate-metrics validate-api-cors validate-k8s validate-production-k8s validate-release-tools validate-release-command validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-local-webhook validate-webhook-tunnel local-doctor local-up local-down local-status run-server run-frontend all-local \
         test-go lint-go audit-go test-agent lint-agent audit-frontend audit-deps
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
@@ -153,6 +153,7 @@ validate-scripts: ## Validate repository Ruby helper scripts
 	ruby -c scripts/validate-cluster-runtime.rb
 	ruby -c scripts/validate-local-runtime.rb
 	ruby -c scripts/validate-local-webhook.rb
+	ruby -c scripts/local-doctor.rb
 	ruby -c scripts/local-stack.rb
 	ruby -c scripts/validate-observability-config.rb
 	ruby -c scripts/validate-secrets.rb
@@ -175,6 +176,9 @@ validate-local-webhook: ## Send a signed local webhook ping and confirm activity
 
 validate-webhook-tunnel: ## Validate a public webhook tunnel; set WEBHOOK_BASE_URL and optionally GITHUB_WEBHOOK_SECRET
 	ruby scripts/validate-webhook-tunnel.rb
+
+local-doctor: ## Check local dependencies for the Minikube app loop
+	ruby scripts/local-doctor.rb
 
 local-up: ## Build, deploy, port-forward, and validate the local app stack
 	ruby scripts/local-stack.rb up

@@ -56,6 +56,12 @@ promotion steps live in [docs/release-checklist.md](docs/release-checklist.md).
 The Makefile is the source of truth for local commands. It uses the Minikube profile
 `nova-sre`, which also becomes the Kubernetes context consumed by Terraform.
 
+Before starting, check local dependencies:
+
+```sh
+make local-doctor
+```
+
 1. Start the local cluster:
 
    ```sh
@@ -277,6 +283,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make port-forward-server` | Forwards `svc/nova-sre-server` in namespace `nova-sre` to `localhost:8080`. |
 | `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |
 | `make port-forward-frontend` | Forwards `svc/nova-sre-frontend` in namespace `nova-sre` to `localhost:8081`. |
+| `make local-doctor` | Checks local tools needed for the Minikube app loop and webhook testing. |
 | `make local-up` | Builds, deploys, starts managed API/frontend port-forwards, and validates `localhost:8080`/`8081`. |
 | `make local-down` | Stops API/frontend port-forwards started by `make local-up`. |
 | `make local-status` | Shows managed local port-forward status. |

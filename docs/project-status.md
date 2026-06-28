@@ -62,6 +62,8 @@ management, and a more complete operator control surface.
   without putting secret values in `kubectl` command arguments.
 - A local stack helper can build/deploy, manage API/frontend port-forwards, and
   validate the browser-ready control panel with `make local-up`.
+- A local dependency doctor reports missing tools before users start the
+  Minikube app loop.
 - A release checklist now covers preflight validation, image publishing,
   production overlay customization, rollout, smoke tests, monitoring, and
   rollback.
@@ -114,8 +116,8 @@ CI currently gates:
 
 - Promote the local file-backed activity store to production-grade persistence
   with persistent volumes or an external database.
-- Add a lightweight local dependency preflight that reports missing Docker,
-  Minikube, kubectl, Go, Python, Node, npm, Terraform, and tunnel tools.
+- Add a compact local troubleshooting page for common Minikube, port-forward,
+  webhook-signature, and browser CORS failures.
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.
 - Add richer GitHub PR comment controls in the control panel instead of only
