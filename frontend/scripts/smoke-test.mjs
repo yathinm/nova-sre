@@ -10,6 +10,7 @@ const checks = [
   ["authorization header", "Authorization: `Bearer ${token}`"],
   ["api token storage", 'window.localStorage.setItem("novaSreApiToken", apiToken)'],
   ["runtime summary card", 'label: "Runtime"'],
+  ["pipeline metrics filter", 'name.startsWith("pipeline_")'],
 ];
 
 const failures = checks
