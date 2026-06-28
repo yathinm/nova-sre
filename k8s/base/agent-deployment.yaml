@@ -15,6 +15,7 @@ spec:
       labels:
         app: nova-sre-agent
     spec:
+      automountServiceAccountToken: false
       securityContext:
         seccompProfile:
           type: RuntimeDefault
