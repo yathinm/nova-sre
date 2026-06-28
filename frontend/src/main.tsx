@@ -12,8 +12,8 @@ declare global {
 
 const DEFAULT_API_BASE = "http://localhost:8080";
 const ENDPOINTS = {
-  events: ["/api/events", "/events"],
-  jobs: ["/api/jobs", "/jobs"],
+  events: "/api/events",
+  jobs: "/api/jobs",
 } as const;
 const AUTO_REFRESH_MS = 30_000;
 
@@ -929,31 +929,19 @@ function parseMetricFamilies(metricsText: string) {
   return Array.from(names).sort();
 }
 
-async function loadList(client: ReturnType<typeof createClient>, kind: ListKind, paths: readonly string[]): Promise<ListResult> {
-  for (const path of paths) {
-    try {
-      const payload = await client.json(path);
-      const items = normalizeList(payload);
-      return { items, source: path, message: "", status: items.length ? "ready" : "empty" };
-    } catch (error) {
-      const apiError = error as ApiError;
-      if (apiError.status && apiError.status !== 404) {
-        return {
-          items: [],
-          source: path,
-          message: `Could not load ${kind}: ${describeFetchError(error)}`,
-          status: "error" as const,
-        };
-      }
-    }
+async function loadList(client: ReturnType<typeof createClient>, kind: ListKind, path: string): Promise<ListResult> {
+  try {
+    const payload = await client.json(path);
+    const items = normalizeList(payload);
+    return { items, source: path, message: "", status: items.length ? "ready" : "empty" };
+  } catch (error) {
+    return {
+      items: [],
+      source: path,
+      message: `Could not load ${kind}: ${describeFetchError(error)}`,
+      status: "error" as const,
+    };
   }
-
-  return {
-    items: [],
-    source: "Not implemented",
-    message: `${titleCase(kind)} are not exposed by the Go API yet.`,
-    status: "error" as const,
-  };
 }
 
 function normalizeList(payload: unknown): ApiRecord[] {

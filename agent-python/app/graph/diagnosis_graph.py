@@ -233,10 +233,6 @@ def validate_markdown(state: DiagnosisState) -> dict:
     }
 
 
-def validate_pr_comment(state: DiagnosisState) -> dict:
-    return validate_markdown(state)
-
-
 def _runner_context_lines(state: DiagnosisState) -> list[str]:
     context: list[str] = []
     if state.reason:

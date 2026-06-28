@@ -17,6 +17,7 @@ override.tf.json
 /server-go/*.test
 
 # Python
+/.venv/
 /agent-python/.venv/
 /agent-python/__pycache__/
 /agent-python/.pytest_cache/

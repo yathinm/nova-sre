@@ -66,10 +66,6 @@ func NewServer(webhookSecret string) *Server {
 	return NewServerWithEnqueuer(webhookSecret, enqueueGitHubEvent)
 }
 
-func NewServerWithRunner(webhookSecret string, eventRunner githubEventRunner) *Server {
-	return NewServerWithRunnerAndActivity(webhookSecret, eventRunner, newActivityStore(defaultActivityLimit))
-}
-
 func NewServerWithRunnerAndActivity(webhookSecret string, eventRunner githubEventRunner, activity *activityStore) *Server {
 	return NewServerWithEnqueuerAndActivity(webhookSecret, enqueueGitHubEventWithRunner(eventRunner), activity)
 }

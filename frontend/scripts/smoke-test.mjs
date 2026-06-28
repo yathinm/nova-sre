@@ -4,8 +4,8 @@ import { join } from "node:path";
 const source = readFileSync(join(process.cwd(), "src", "main.tsx"), "utf8");
 
 const checks = [
-  ["events endpoint", 'events: ["/api/events", "/events"]'],
-  ["jobs endpoint", 'jobs: ["/api/jobs", "/jobs"]'],
+  ["events endpoint", 'events: "/api/events"'],
+  ["jobs endpoint", 'jobs: "/api/jobs"'],
   ["runtime config endpoint", 'client.json("/api/config")'],
   ["activity summary endpoint", 'client.json("/api/summary")'],
   ["authorization header", "Authorization: `Bearer ${token}`"],

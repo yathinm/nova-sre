@@ -108,7 +108,6 @@ class DiagnosisRequest(BaseModel):
     message: str | None = None
     pull_request: PullRequestMetadata | None = None
     observed_time: datetime | None = None
-    webhook_body: dict[str, Any] | list[Any] | str | None = None
     github_owner: str | None = Field(default=None, min_length=1)
     github_repo: str | None = Field(default=None, min_length=1)
     github_pr_number: int | None = Field(default=None, gt=0)

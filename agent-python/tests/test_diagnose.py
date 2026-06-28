@@ -12,7 +12,6 @@ from app.graph.diagnosis_graph import (
     classify_failure,
     generate_proposed_fix,
     validate_markdown,
-    validate_pr_comment,
 )
 from app.main import app, github_comment_client
 from app.models.schemas import DiagnosisRequest, DiagnosisState, TRUNCATED_LOG_NOTICE
@@ -348,21 +347,6 @@ def test_diagnosis_request_truncates_large_structured_logs(monkeypatch) -> None:
     assert len(logs) <= 120
     assert TRUNCATED_LOG_NOTICE in logs
     assert "[pod-a/runner]" in logs
-
-
-def test_validate_pr_comment_appends_safe_fallback_when_block_is_missing() -> None:
-    result = validate_pr_comment(
-        DiagnosisState(
-            run_id="run-789",
-            repo="acme/nova",
-            sha="fed789",
-            diagnosis="precomputed",
-            pr_comment="A markdown comment without a fenced block.",
-        )
-    )
-
-    assert "A markdown comment without a fenced block." in result["pr_comment"]
-    assert "```log\nNo log excerpt was available for this diagnosis.\n```" in result["pr_comment"]
 
 
 def test_classify_failure_detects_dependency_failures() -> None:

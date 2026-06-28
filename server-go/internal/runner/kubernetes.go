@@ -20,15 +20,6 @@ type KubernetesConfigLoader struct {
 	BuildConfigFromFlags func(masterURL string, kubeconfigPath string) (*rest.Config, error)
 }
 
-func KubernetesJobCreatorFromEnv(config JobConfig, getenv func(string) string) (KubernetesJobCreator, string, error) {
-	clientset, source, err := KubernetesClientsetFromEnv(getenv)
-	if err != nil {
-		return KubernetesJobCreator{}, source, err
-	}
-
-	return NewKubernetesJobCreator(config, clientset.BatchV1()), source, nil
-}
-
 func KubernetesClientsetFromEnv(getenv func(string) string) (*kubernetes.Clientset, string, error) {
 	restConfig, source, err := KubernetesRESTConfigFromEnv(getenv)
 	if err != nil {

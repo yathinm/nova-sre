@@ -131,7 +131,6 @@ type DiagnoseRequest struct {
 	Message           string              `json:"message,omitempty"`
 	PullRequest       PullRequestMetadata `json:"pull_request,omitempty"`
 	Logs              []LogEntry          `json:"logs"`
-	WebhookBody       json.RawMessage     `json:"webhook_body,omitempty"`
 	ObservedTime      time.Time           `json:"observed_time"`
 	GitHubCommentMode string              `json:"github_comment_mode,omitempty"`
 }
@@ -504,7 +503,6 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 		Message:           result.Message,
 		PullRequest:       metadata.PullRequest,
 		Logs:              logs,
-		WebhookBody:       append(json.RawMessage(nil), event.Body...),
 		ObservedTime:      r.now(),
 		GitHubCommentMode: r.Config.withDefaults(metadata).GitHubCommentMode,
 	}

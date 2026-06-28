@@ -151,28 +151,6 @@ func (s *activityStore) ObserveJob(update runner.JobStatusUpdate) {
 	})
 }
 
-func (s *activityStore) summary() activitySummary {
-	if s == nil {
-		return activitySummary{ByStatus: map[string]int{}, ByEvent: map[string]int{}}
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	summary := activitySummary{
-		ByStatus: map[string]int{},
-		ByEvent:  map[string]int{},
-	}
-	for _, record := range s.records {
-		summary.Total++
-		summary.ByStatus[normalizeActivityStatus(firstNonEmpty(record.Status, "unknown"))]++
-		summary.ByEvent[firstNonEmpty(record.Event, "unknown")]++
-		if record.UpdatedAt.After(summary.UpdatedAt) {
-			summary.UpdatedAt = record.UpdatedAt
-		}
-	}
-	return summary
-}
 
 func summarizeActivityRecords(records []activityRecord) activitySummary {
 	summary := activitySummary{
