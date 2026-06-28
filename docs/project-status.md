@@ -29,14 +29,18 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
   dashboard-friendly buckets, including diagnosis delivery success or failure
   after failed runner Jobs.
 - Python agent accepts runner diagnosis payloads, truncates oversized normalized
-  logs, produces deterministic fallback diagnoses, and can post GitHub PR
+  logs, produces deterministic fallback diagnoses, and can upsert GitHub PR
   comments when metadata and token permissions are present.
+- GitHub PR comments include a hidden Nova-SRE marker, update the existing
+  Nova-SRE diagnosis comment by default, support explicit create mode, and
+  return sanitized create/update/skip/failure status for control-panel display.
 - Go runner log collection asks Kubernetes for a bounded number of pod log bytes
   before forwarding failed-job logs to the agent.
 - Server-to-agent `/diagnose` calls can be protected with
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline
-  totals, status breakdowns, recent events, and recent jobs.
+  totals, status breakdowns, recent events, recent jobs, and job-level failure
+  details such as GitHub PR comment permission errors.
 - Runtime config reports whether server-to-agent auth is enabled without exposing
   the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
@@ -86,9 +90,8 @@ CI currently gates:
 - Expand runner behavior beyond the current local job execution path.
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.
-- Turn GitHub PR comment behavior into a fuller workflow with clearer posting
-  controls, update-vs-create behavior, and permission failure reporting in the
-  control panel.
+- Add richer GitHub PR comment controls in the control panel instead of only
+  accepting request-level create/upsert settings from the diagnosis API.
 - Add production-ready ingress, TLS, domain configuration, and environment
   overlays instead of relying on port-forwards and temporary tunnels.
 - Decide how API auth and CORS should be configured outside isolated local demos.

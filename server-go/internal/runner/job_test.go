@@ -301,6 +301,35 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	}
 }
 
+func TestJobRunnerReportsGitHubCommentErrors(t *testing.T) {
+	agent := &recordingAgent{
+		response: DiagnoseResponse{
+			GitHubCommentError:  "GitHub PR comment lookup failed with HTTP 403; check GITHUB_TOKEN permissions for issue comments.",
+			GitHubCommentAction: "failed",
+		},
+	}
+	observer := &recordingObserver{}
+	runner := JobRunner{
+		Watcher:      &recordingWatcher{result: JobResult{Failed: true, Reason: "BackoffLimitExceeded", Message: "runner exited 1"}},
+		LogCollector: &recordingLogCollector{logs: []LogEntry{{Logs: "failed"}}},
+		Agent:        agent,
+		Observer:     observer,
+		Logger:       log.New(io.Discard, "", 0),
+	}
+
+	runner.runFailureCallback(context.Background(), &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "runner-jobs", Name: "failed-job"},
+	}, Event{DeliveryID: "delivery-123", Type: "push", Body: []byte(`{}`)})
+
+	update := observer.last()
+	if update.Status != "diagnosis_comment_error" || update.Reason != "GitHubCommentFailed" {
+		t.Fatalf("expected GitHub comment error observation, got %#v", update)
+	}
+	if update.Message != agent.response.GitHubCommentError {
+		t.Fatalf("expected sanitized comment error, got %q", update.Message)
+	}
+}
+
 func TestJobRunnerSkipsAgentForSuccessfulJob(t *testing.T) {
 	agent := &recordingAgent{}
 	runner := JobRunner{
@@ -379,6 +408,11 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{
+			"github_comment_posted": true,
+			"github_comment_url": "https://github.com/acme/widgets/pull/42#issuecomment-1",
+			"github_comment_action": "updated"
+		}`))
 	}))
 	defer server.Close()
 
@@ -387,7 +421,7 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 		t.Fatalf("NewHTTPAgentClient returned error: %v", err)
 	}
 
-	err = client.Diagnose(context.Background(), DiagnoseRequest{
+	response, err := client.Diagnose(context.Background(), DiagnoseRequest{
 		DeliveryID: "delivery-123",
 		Event:      "push",
 		Repository: "acme/widgets",
@@ -406,6 +440,9 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}
 	if gotToken != "agent-token" {
 		t.Fatalf("expected agent token header, got %q", gotToken)
+	}
+	if !response.GitHubCommentPosted || response.GitHubCommentAction != "updated" {
+		t.Fatalf("expected parsed GitHub comment response, got %#v", response)
 	}
 }
 
@@ -500,15 +537,16 @@ func (c *recordingLogCollector) CollectJobLogs(_ context.Context, _ string, _ st
 }
 
 type recordingAgent struct {
-	called  bool
-	request DiagnoseRequest
-	err     error
+	called   bool
+	request  DiagnoseRequest
+	response DiagnoseResponse
+	err      error
 }
 
-func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) error {
+func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) (DiagnoseResponse, error) {
 	a.called = true
 	a.request = request
-	return a.err
+	return a.response, a.err
 }
 
 type recordingObserver struct {

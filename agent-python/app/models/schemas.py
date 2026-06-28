@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.clients.github_comments import GitHubCommentAction, GitHubCommentMode
+
 
 DEFAULT_MAX_NORMALIZED_LOG_CHARS = 20_000
 MAX_LOG_CHARS_ENV = "NOVA_SRE_MAX_LOG_CHARS"
@@ -88,6 +90,7 @@ class DiagnosisState(BaseModel):
     github_comment_posted: bool = False
     github_comment_url: str | None = None
     github_comment_error: str | None = None
+    github_comment_action: GitHubCommentAction = "skipped"
 
 
 class DiagnosisRequest(BaseModel):
@@ -109,6 +112,7 @@ class DiagnosisRequest(BaseModel):
     github_repo: str | None = Field(default=None, min_length=1)
     github_pr_number: int | None = Field(default=None, gt=0)
     post_github_comment: bool = False
+    github_comment_mode: GitHubCommentMode = "upsert"
 
     def to_state_input(self) -> dict:
         repo = self.repo or self.repository or _repo_from_github_metadata(self)
@@ -152,6 +156,7 @@ class DiagnosisResponse(BaseModel):
     github_comment_posted: bool = False
     github_comment_url: str | None = None
     github_comment_error: str | None = None
+    github_comment_action: GitHubCommentAction = "skipped"
 
 
 def build_diagnosis_result(state: DiagnosisState) -> DiagnosisResult:
