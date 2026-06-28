@@ -127,6 +127,17 @@ WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com \
 The signed check sends a supported `ping` delivery, so use it only when you want
 Nova-SRE to exercise the webhook enqueue path.
 
+To verify the signed webhook path locally before involving GitHub, keep
+`make port-forward-server` running and run:
+
+```sh
+make validate-local-webhook
+```
+
+The command uses `GITHUB_WEBHOOK_SECRET` when set, otherwise it reads the
+`GITHUB_WEBHOOK_SECRET` key from the local `nova-sre-secrets` Kubernetes secret
+without printing it.
+
 ## Webhook Delivery Troubleshooting
 
 In GitHub delivery history, `failed to connect to host` means GitHub could not
