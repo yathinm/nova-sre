@@ -45,6 +45,7 @@ type Server struct {
 	activity      *activityStore
 	jobLister     kubernetesJobLister
 	apiToken      string
+	apiOrigins    []string
 	runtimeConfig runtimeConfig
 }
 
@@ -98,6 +99,10 @@ func (s *Server) SetAPIToken(token string) {
 	s.runtimeConfig.APIAuthEnabled = s.apiToken != ""
 }
 
+func (s *Server) SetAPIAllowedOrigins(raw string) {
+	s.apiOrigins = parseAllowedOrigins(raw)
+}
+
 func (s *Server) SetDeliveryCacheTTL(ttl time.Duration) {
 	if ttl <= 0 || s.deliveries == nil {
 		return
@@ -116,18 +121,24 @@ func (s *Server) SetRuntimeConfig(config runtimeConfig) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, "/api/") {
-		setAPIHeaders(w)
-		if r.Method == http.MethodOptions {
+	if s.isBrowserReadablePath(r.URL.Path) {
+		s.setAPIHeaders(w, r)
+		if r.Method == http.MethodOptions && strings.HasPrefix(r.URL.Path, "/api/") {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
 		if !s.validAPIToken(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) isBrowserReadablePath(path string) bool {
+	return strings.HasPrefix(path, "/api/") || path == "/healthz" || path == "/metrics"
 }
 
 func (s *Server) routes() {
@@ -300,11 +311,54 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 	}
 }
 
-func setAPIHeaders(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+func (s *Server) setAPIHeaders(w http.ResponseWriter, r *http.Request) {
+	if origin := s.allowedAPIOrigin(r.Header.Get("Origin")); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		if origin != "*" {
+			w.Header().Add("Vary", "Origin")
+		}
+	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256, "+apiTokenHeader)
 	w.Header().Set("Cache-Control", "no-store")
+}
+
+func (s *Server) allowedAPIOrigin(requestOrigin string) string {
+	origins := s.apiOrigins
+	if len(origins) == 0 {
+		return "*"
+	}
+	for _, origin := range origins {
+		if origin == "*" {
+			return "*"
+		}
+		if requestOrigin != "" && origin == requestOrigin {
+			return requestOrigin
+		}
+	}
+	return ""
+}
+
+func parseAllowedOrigins(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	values := strings.Split(raw, ",")
+	origins := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		origin := strings.TrimSpace(value)
+		if origin == "" {
+			continue
+		}
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	return origins
 }
 
 func (s *Server) validAPIToken(r *http.Request) bool {
