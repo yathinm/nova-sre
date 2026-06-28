@@ -4,6 +4,9 @@ Nova-SRE's local `k8s/base` manifests are intentionally Minikube-focused. Use
 `k8s/overlays/production` as the starting point for a non-local deployment with
 Ingress, TLS, and persistent recent activity.
 
+Use [release-checklist.md](release-checklist.md) when promoting a tested build
+through a real release.
+
 ## Overlay
 
 Render or apply the production overlay with:

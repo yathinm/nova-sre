@@ -37,7 +37,8 @@ open `http://localhost:3000`. See
 demo workflow, and [docs/project-status.md](docs/project-status.md) for the
 current completion snapshot and remaining MVP work. Production-oriented ingress,
 TLS, and persistence notes live in
-[docs/production-deployment.md](docs/production-deployment.md).
+[docs/production-deployment.md](docs/production-deployment.md), and release
+promotion steps live in [docs/release-checklist.md](docs/release-checklist.md).
 
 ## Local Prerequisites
 
