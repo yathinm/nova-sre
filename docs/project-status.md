@@ -39,8 +39,12 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - Server-to-agent `/diagnose` calls can be protected with
   `NOVA_SRE_AGENT_TOKEN`; the live Minikube deployment has this token configured.
 - React control panel shows API health, metrics, runtime config, pipeline
-  totals, status breakdowns, recent events, recent jobs, and job-level failure
-  details such as GitHub PR comment permission errors.
+  totals, status breakdowns, recent events, recent jobs, activity persistence
+  mode, and job-level failure details such as GitHub PR comment permission
+  errors.
+- Go server can persist bounded recent activity to an atomic JSON snapshot and
+  reload it on startup; the local Kubernetes deployment mounts this path for
+  server container restarts.
 - Runtime config reports whether server-to-agent auth is enabled without exposing
   the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
@@ -86,7 +90,8 @@ CI currently gates:
 
 ## Remaining MVP Work
 
-- Add a durable activity store so events/jobs survive Go server restarts.
+- Promote the local file-backed activity store to production-grade persistence
+  with persistent volumes or an external database.
 - Expand runner behavior beyond the current local job execution path.
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.

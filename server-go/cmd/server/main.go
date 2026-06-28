@@ -14,8 +14,12 @@ import (
 func main() {
 	jobConfig := runner.JobConfigFromEnv(os.Getenv)
 	activityLimit := intFromEnv("NOVA_SRE_ACTIVITY_LIMIT", defaultActivityLimit)
+	activityStorePath := strings.TrimSpace(os.Getenv("NOVA_SRE_ACTIVITY_STORE_PATH"))
 	deliveryCacheTTL := durationFromEnv("NOVA_SRE_DELIVERY_CACHE_TTL", 15*time.Minute)
-	activity := newActivityStore(activityLimit)
+	activity, err := newPersistentActivityStore(activityLimit, activityStorePath)
+	if err != nil {
+		log.Printf("activity store started empty after load failure path=%s: %v", activityStorePath, err)
+	}
 	jobRunner := runner.NewJobRunner(jobConfig, nil, log.Default())
 	jobRunner.Observer = activity
 
@@ -42,12 +46,13 @@ func main() {
 	}
 	server := NewServerWithRunnerAndActivity(os.Getenv("GITHUB_WEBHOOK_SECRET"), jobRunner, activity)
 	server.SetRuntimeConfig(runtimeConfig{
-		ActivityLimit:       activityLimit,
-		DeliveryCacheTTL:    deliveryCacheTTL.String(),
-		AgentAuthEnabled:    strings.TrimSpace(os.Getenv("NOVA_SRE_AGENT_TOKEN")) != "",
-		RunnerNamespace:     jobConfig.Namespace,
-		RunnerImage:         jobConfig.Image,
-		RunnerJobTTLSeconds: int32Value(jobConfig.TTLSecondsFinished),
+		ActivityLimit:        activityLimit,
+		ActivityStoreEnabled: activityStorePath != "",
+		DeliveryCacheTTL:     deliveryCacheTTL.String(),
+		AgentAuthEnabled:     strings.TrimSpace(os.Getenv("NOVA_SRE_AGENT_TOKEN")) != "",
+		RunnerNamespace:      jobConfig.Namespace,
+		RunnerImage:          jobConfig.Image,
+		RunnerJobTTLSeconds:  int32Value(jobConfig.TTLSecondsFinished),
 	})
 	server.SetDeliveryCacheTTL(deliveryCacheTTL)
 	server.SetAPIToken(os.Getenv("NOVA_SRE_API_TOKEN"))

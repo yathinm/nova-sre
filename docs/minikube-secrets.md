@@ -43,6 +43,7 @@ NOVA_SRE_AGENT_URL=http://nova-sre-agent.nova-sre.svc.cluster.local:8000
 NOVA_SRE_AGENT_TOKEN=<from nova-sre-secrets when configured>
 RUNNER_JOB_TTL_SECONDS=900
 NOVA_SRE_ACTIVITY_LIMIT=200
+NOVA_SRE_ACTIVITY_STORE_PATH=/var/lib/nova-sre/activity.json
 NOVA_SRE_DELIVERY_CACHE_TTL=15m
 NOVA_SRE_RUNNER_LOG_LIMIT_BYTES=65536
 NOVA_SRE_READ_HEADER_TIMEOUT=5s
@@ -75,6 +76,12 @@ request only when a fresh comment is explicitly desired.
 The Go server also asks Kubernetes for at most
 `NOVA_SRE_RUNNER_LOG_LIMIT_BYTES` bytes per runner pod container before sending
 logs to the agent, keeping raw log collection bounded at the source.
+
+The Go server writes recent activity to `NOVA_SRE_ACTIVITY_STORE_PATH` when it
+is set. The local Kubernetes deployment mounts `/var/lib/nova-sre` as an
+`emptyDir`, so activity survives server container restarts within the same pod.
+Use a persistent volume for non-local environments that need activity to
+survive pod replacement.
 
 An example manifest is available at `k8s/examples/nova-sre-secret.example.yaml`
 for local experimentation. Keep real secret values out of git.

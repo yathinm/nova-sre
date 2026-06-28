@@ -220,6 +220,8 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    - The tunnel forwards to the port-forwarded Go server in Minikube.
    - The Go orchestrator creates a Kubernetes Job in Minikube.
    - The job emits logs and metrics for collection.
+   - The Go server keeps a bounded local activity snapshot for recent events and
+     jobs.
    - The LangGraph agent diagnoses failures.
    - The GitHub integration upserts the Nova-SRE diagnosis comment on the pull
      request and reports sanitized comment failures back through recent job

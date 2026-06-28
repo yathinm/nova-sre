@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +229,83 @@ func TestActivitySummaryNormalizesSuccessfulStatusAliases(t *testing.T) {
 	}
 	if _, ok := summary.ByStatus["success"]; ok {
 		t.Fatalf("did not expect separate success bucket: %#v", summary)
+	}
+}
+
+func TestPersistentActivityStoreReloadsRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "activity.json")
+	store, err := newPersistentActivityStore(10, path)
+	if err != nil {
+		t.Fatalf("newPersistentActivityStore returned error: %v", err)
+	}
+	now := time.Date(2026, 6, 28, 9, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+
+	store.recordReceived(githubEvent{
+		DeliveryID: "delivery-1",
+		Event:      "push",
+		Body: []byte(`{
+			"repository": {"full_name": "acme/widgets"},
+			"head_commit": {"id": "abc123"}
+		}`),
+	})
+	store.ObserveJob(runner.JobStatusUpdate{
+		DeliveryID: "delivery-1",
+		Event:      "push",
+		Status:     "succeeded",
+		Namespace:  "runner-jobs",
+		JobName:    "nova-sre-push-abc123",
+		Reason:     "updated",
+		Message:    "https://github.com/acme/widgets/pull/1#issuecomment-1",
+	})
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("expected persisted activity file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("expected activity file mode 0600, got %o", got)
+	}
+
+	reloaded, err := newPersistentActivityStore(10, path)
+	if err != nil {
+		t.Fatalf("reload persistent store: %v", err)
+	}
+	records := reloaded.recent(10)
+	if len(records) != 1 {
+		t.Fatalf("expected one reloaded record, got %#v", records)
+	}
+	record := records[0]
+	if record.DeliveryID != "delivery-1" || record.Status != "succeeded" {
+		t.Fatalf("unexpected reloaded record: %#v", record)
+	}
+	if record.JobName != "nova-sre-push-abc123" || record.Message == "" {
+		t.Fatalf("expected reloaded job detail, got %#v", record)
+	}
+}
+
+func TestPersistentActivityStoreReloadHonorsLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "activity.json")
+	store, err := newPersistentActivityStore(2, path)
+	if err != nil {
+		t.Fatalf("newPersistentActivityStore returned error: %v", err)
+	}
+	for _, deliveryID := range []string{"delivery-1", "delivery-2", "delivery-3"} {
+		store.recordReceived(githubEvent{DeliveryID: deliveryID, Event: "push", Body: []byte(`{}`)})
+	}
+
+	reloaded, err := newPersistentActivityStore(2, path)
+	if err != nil {
+		t.Fatalf("reload persistent store: %v", err)
+	}
+	records := reloaded.recent(10)
+	if len(records) != 2 {
+		t.Fatalf("expected two records after reload pruning, got %#v", records)
+	}
+	for _, record := range records {
+		if record.DeliveryID == "delivery-1" {
+			t.Fatalf("expected oldest record to be pruned, got %#v", records)
+		}
 	}
 }
 
@@ -552,12 +631,13 @@ func TestAPIAcceptsTokenHeader(t *testing.T) {
 func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 	server := NewServer("webhook-secret")
 	server.SetRuntimeConfig(runtimeConfig{
-		ActivityLimit:       25,
-		DeliveryCacheTTL:    "5m0s",
-		AgentAuthEnabled:    true,
-		RunnerNamespace:     "runner-jobs",
-		RunnerImage:         "nova-sre-runner:local",
-		RunnerJobTTLSeconds: 900,
+		ActivityLimit:        25,
+		ActivityStoreEnabled: true,
+		DeliveryCacheTTL:     "5m0s",
+		AgentAuthEnabled:     true,
+		RunnerNamespace:      "runner-jobs",
+		RunnerImage:          "nova-sre-runner:local",
+		RunnerJobTTLSeconds:  900,
 	})
 	server.SetAPIToken("control-panel-token")
 	server.SetAPIAllowedOrigins("https://panel.example.com")
@@ -576,6 +656,9 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 	}
 	if config.ActivityLimit != 25 || config.DeliveryCacheTTL != "5m0s" {
 		t.Fatalf("unexpected activity config: %#v", config)
+	}
+	if !config.ActivityStoreEnabled {
+		t.Fatalf("expected activity store to be enabled: %#v", config)
 	}
 	if !config.APIAuthEnabled {
 		t.Fatalf("expected api auth to be enabled: %#v", config)
