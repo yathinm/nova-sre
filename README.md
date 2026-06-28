@@ -224,6 +224,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make tf-import-observability` | Imports existing local observability resources into Terraform state. |
 | `make docker-env` | Prints the command that points Docker at Minikube's daemon. |
 | `make docker-build` | Builds server, agent, and frontend images into Minikube's Docker daemon. |
+| `make docker-build-ci` | Builds server, agent, and frontend images with the active Docker daemon for CI validation. |
 | `make deploy-apps` | Applies `k8s/rbac/` and `k8s/base/`, then restarts and waits for local app deployments. |
 | `make port-forward-server` | Forwards `svc/nova-sre-server` in namespace `nova-sre` to `localhost:8080`. |
 | `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |

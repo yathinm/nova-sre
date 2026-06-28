@@ -27,6 +27,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       k8s: ${{ steps.filter.outputs.k8s }}
       terraform: ${{ steps.filter.outputs.terraform }}
+      docker: ${{ steps.filter.outputs.docker }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,6 +56,12 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'terraform/**'
               - 'dashboards/**'
+              - 'Makefile'
+            docker:
+              - '.github/workflows/ci.yml'
+              - 'server-go/**'
+              - 'agent-python/**'
+              - 'frontend/**'
               - 'Makefile'
 
   server-go:
@@ -162,3 +169,15 @@ jobs:
 
       - name: Validate Terraform
         run: make tf-validate
+
+  docker:
+    name: Docker image builds
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build application images
+        run: make docker-build-ci
