@@ -112,6 +112,11 @@ h2 {
   background: var(--accent-strong);
 }
 
+.api-row button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
 .notice {
   margin-bottom: 16px;
   border: 1px solid #f1c78b;
@@ -209,10 +214,6 @@ h2 {
   color: var(--muted);
   border-bottom: 1px solid var(--line);
   background: #fbfcfd;
-}
-
-.state:empty {
-  display: none;
 }
 
 .table-wrap {
