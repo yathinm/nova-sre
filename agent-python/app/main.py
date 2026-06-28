@@ -18,7 +18,8 @@ async def health() -> dict:
 async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
     result = diagnosis_graph.invoke(request.model_dump(exclude={"post_github_comment"}))
     state = DiagnosisState.model_validate(result)
-    if request.post_github_comment:
+    should_handle_github_comment = request.post_github_comment or _has_pr_metadata(state)
+    if should_handle_github_comment:
         if state.github_owner and state.github_repo and state.github_pr_number:
             comment_result = await github_comment_client.post_comment(
                 owner=state.github_owner,
@@ -48,3 +49,7 @@ async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
         github_comment_url=state.github_comment_url,
         github_comment_error=state.github_comment_error,
     )
+
+
+def _has_pr_metadata(state: DiagnosisState) -> bool:
+    return bool(state.github_owner or state.github_repo or state.github_pr_number)

@@ -53,10 +53,19 @@ class GitHubPullRequestCommentClient:
             timeout=self.timeout,
             transport=transport,
         ) as client:
-            response = await client.post(url, headers=headers, json={"body": body})
+            try:
+                response = await client.post(url, headers=headers, json={"body": body})
+            except httpx.HTTPError as exc:
+                return GitHubCommentResult(
+                    posted=False,
+                    error=f"GitHub PR comment posting failed: {exc}",
+                )
 
         if response.is_success:
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
             return GitHubCommentResult(posted=True, url=payload.get("html_url"))
 
         return GitHubCommentResult(
