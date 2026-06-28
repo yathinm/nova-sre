@@ -72,6 +72,9 @@ spec:
             # Optional event-specific runner commands are supported through
             # RUNNER_JOB_COMMAND_PUSH, RUNNER_JOB_COMMAND_PULL_REQUEST, and
             # RUNNER_JOB_COMMAND_WORKFLOW_RUN.
+            # Optional repository-specific commands are supported through
+            # RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES with owner/repo=command
+            # entries separated by newlines or semicolons.
             - name: NOVA_SRE_ACTIVITY_LIMIT
               value: "200"
             - name: NOVA_SRE_ACTIVITY_STORE_PATH

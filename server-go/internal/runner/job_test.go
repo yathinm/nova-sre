@@ -159,21 +159,22 @@ func TestBuildGitHubEventJobRequiresRunnerImage(t *testing.T) {
 
 func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 	values := map[string]string{
-		"RUNNER_JOB_NAMESPACE":            "runner-jobs",
-		"RUNNER_JOB_IMAGE":                "ghcr.io/example/nova-runner:test",
-		"RUNNER_REPO":                     "acme/widgets",
-		"RUNNER_SHA":                      "abcdef",
-		"RUNNER_JOB_COMMAND":              "/bin/runner --once",
-		"RUNNER_JOB_COMMAND_PULL_REQUEST": "/bin/runner --pull-request",
-		"RUNNER_JOB_COMMAND_WORKFLOW_RUN": "/bin/runner --workflow-run",
-		"NOVA_SRE_GITHUB_COMMENT_MODE":    "create",
-		"RUNNER_JOB_TTL_SECONDS":          "900",
-		"RUNNER_JOB_BACKOFF_LIMIT":        "2",
-		"RUNNER_JOB_SERVICE_ACCOUNT":      "nova-runner",
-		"RUNNER_JOB_CPU_REQUEST":          "150m",
-		"RUNNER_JOB_MEMORY_REQUEST":       "160Mi",
-		"RUNNER_JOB_CPU_LIMIT":            "750m",
-		"RUNNER_JOB_MEMORY_LIMIT":         "384Mi",
+		"RUNNER_JOB_NAMESPACE":                    "runner-jobs",
+		"RUNNER_JOB_IMAGE":                        "ghcr.io/example/nova-runner:test",
+		"RUNNER_REPO":                             "acme/widgets",
+		"RUNNER_SHA":                              "abcdef",
+		"RUNNER_JOB_COMMAND":                      "/bin/runner --once",
+		"RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES": "acme/widgets=/bin/runner --repo\nother/service=/bin/runner --other",
+		"RUNNER_JOB_COMMAND_PULL_REQUEST":         "/bin/runner --pull-request",
+		"RUNNER_JOB_COMMAND_WORKFLOW_RUN":         "/bin/runner --workflow-run",
+		"NOVA_SRE_GITHUB_COMMENT_MODE":            "create",
+		"RUNNER_JOB_TTL_SECONDS":                  "900",
+		"RUNNER_JOB_BACKOFF_LIMIT":                "2",
+		"RUNNER_JOB_SERVICE_ACCOUNT":              "nova-runner",
+		"RUNNER_JOB_CPU_REQUEST":                  "150m",
+		"RUNNER_JOB_MEMORY_REQUEST":               "160Mi",
+		"RUNNER_JOB_CPU_LIMIT":                    "750m",
+		"RUNNER_JOB_MEMORY_LIMIT":                 "384Mi",
 	}
 
 	config := JobConfigFromEnv(func(name string) string {
@@ -194,6 +195,9 @@ func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 	}
 	if got := config.CommandByEvent["workflow_run"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--workflow-run" {
 		t.Fatalf("unexpected workflow_run command override: %#v", got)
+	}
+	if got := config.CommandByRepository["acme/widgets"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--repo" {
+		t.Fatalf("unexpected repository command override: %#v", got)
 	}
 	if config.GitHubCommentMode != "create" {
 		t.Fatalf("expected GitHub comment mode create, got %q", config.GitHubCommentMode)
@@ -266,6 +270,53 @@ func TestBuildGitHubEventJobUsesEventCommandOverride(t *testing.T) {
 	command := job.Spec.Template.Spec.Containers[0].Command
 	if len(command) != 2 || command[1] != "--pull-request" {
 		t.Fatalf("expected event-specific command, got %#v", command)
+	}
+}
+
+func TestBuildGitHubEventJobUsesRepositoryCommandOverride(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByRepository: map[string][]string{
+			"acme/widgets": {"/bin/runner", "--repo"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "push",
+		Body:       []byte(`{"repository":{"full_name":"Acme/Widgets"},"after":"abc"}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--repo" {
+		t.Fatalf("expected repository-specific command, got %#v", command)
+	}
+}
+
+func TestBuildGitHubEventJobPrefersEventCommandOverRepositoryCommand(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByEvent: map[string][]string{
+			"pull_request": {"/bin/runner", "--pull-request"},
+		},
+		CommandByRepository: map[string][]string{
+			"acme/widgets": {"/bin/runner", "--repo"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "pull_request",
+		Body:       []byte(`{"pull_request":{"head":{"sha":"abc","repo":{"full_name":"acme/widgets"}}}}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--pull-request" {
+		t.Fatalf("expected event-specific command to win, got %#v", command)
 	}
 }
 
