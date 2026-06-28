@@ -124,6 +124,26 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    capped at 64 KiB per container by default before the agent applies its
    normalized log cap.
 
+   For the normal local app loop, one command can build, deploy, start managed
+   port-forwards for `8080` and `8081`, and validate the browser-ready stack:
+
+   ```sh
+   make local-up
+   ```
+
+   Open `http://localhost:8081` after it passes. Port-forward logs and PIDs are
+   written under `.local/`. Stop those managed forwards with:
+
+   ```sh
+   make local-down
+   ```
+
+   For faster rebuilds after images or manifests are already current, use:
+
+   ```sh
+   NOVA_SRE_LOCAL_SKIP_BUILD=true NOVA_SRE_LOCAL_SKIP_DEPLOY=true make local-up
+   ```
+
 7. Expose the Go server locally after its Kubernetes Service exists:
 
    ```sh
@@ -257,6 +277,9 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make port-forward-server` | Forwards `svc/nova-sre-server` in namespace `nova-sre` to `localhost:8080`. |
 | `make port-forward-agent` | Forwards `svc/nova-sre-agent` in namespace `nova-sre` to `localhost:8000`. |
 | `make port-forward-frontend` | Forwards `svc/nova-sre-frontend` in namespace `nova-sre` to `localhost:8081`. |
+| `make local-up` | Builds, deploys, starts managed API/frontend port-forwards, and validates `localhost:8080`/`8081`. |
+| `make local-down` | Stops API/frontend port-forwards started by `make local-up`. |
+| `make local-status` | Shows managed local port-forward status. |
 | `make port-forward-prometheus` | Forwards `svc/prometheus-server` in namespace `observability` to `localhost:9090`. |
 | `make port-forward-grafana` | Forwards `svc/grafana` in namespace `observability` to `localhost:3000`. |
 | `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
