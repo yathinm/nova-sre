@@ -59,6 +59,7 @@ type runtimeConfig struct {
 	RunnerNamespace      string `json:"runner_namespace,omitempty"`
 	RunnerImage          string `json:"runner_image,omitempty"`
 	RunnerJobTTLSeconds  int32  `json:"runner_job_ttl_seconds,omitempty"`
+	GitHubCommentMode    string `json:"github_comment_mode"`
 }
 
 func NewServer(webhookSecret string) *Server {

@@ -55,6 +55,7 @@ type RuntimeConfig = {
   runner_namespace?: string;
   runner_image?: string;
   runner_job_ttl_seconds?: number;
+  github_comment_mode?: string;
 };
 
 function App() {
@@ -564,14 +565,15 @@ async function loadRuntimeConfig(client: ReturnType<typeof createClient>, setCar
     const agentLabel = config.agent_auth_enabled ? "agent auth" : "agent open";
     const corsLabel = config.api_cors_restricted ? "restricted CORS" : "wildcard CORS";
     const storeLabel = config.activity_store_enabled ? "durable activity" : "memory activity";
+    const commentLabel = `comment ${config.github_comment_mode || "upsert"}`;
     const limit = typeof config.activity_limit === "number" ? config.activity_limit : 0;
     const ttl = textValue(config.runner_job_ttl_seconds ? `${config.runner_job_ttl_seconds}s jobs` : "", config.delivery_cache_ttl);
     setCard({
       label: "Runtime",
       value: authLabel,
       detail: limit
-        ? `${limit} records, ${storeLabel}, ${ttl}, ${corsLabel}, ${agentLabel}`
-        : `Runtime config loaded, ${storeLabel}, ${corsLabel}, ${agentLabel}`,
+        ? `${limit} records, ${storeLabel}, ${ttl}, ${corsLabel}, ${agentLabel}, ${commentLabel}`
+        : `Runtime config loaded, ${storeLabel}, ${corsLabel}, ${agentLabel}, ${commentLabel}`,
       tone: config.api_auth_enabled ? "ok" : "warn",
     });
   } catch (error) {

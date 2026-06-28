@@ -166,6 +166,7 @@ func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 		"RUNNER_JOB_COMMAND":              "/bin/runner --once",
 		"RUNNER_JOB_COMMAND_PULL_REQUEST": "/bin/runner --pull-request",
 		"RUNNER_JOB_COMMAND_WORKFLOW_RUN": "/bin/runner --workflow-run",
+		"NOVA_SRE_GITHUB_COMMENT_MODE":    "create",
 		"RUNNER_JOB_TTL_SECONDS":          "900",
 		"RUNNER_JOB_BACKOFF_LIMIT":        "2",
 		"RUNNER_JOB_SERVICE_ACCOUNT":      "nova-runner",
@@ -193,6 +194,9 @@ func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
 	}
 	if got := config.CommandByEvent["workflow_run"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--workflow-run" {
 		t.Fatalf("unexpected workflow_run command override: %#v", got)
+	}
+	if config.GitHubCommentMode != "create" {
+		t.Fatalf("expected GitHub comment mode create, got %q", config.GitHubCommentMode)
 	}
 	if config.TTLSecondsFinished == nil || *config.TTLSecondsFinished != 900 {
 		t.Fatalf("expected ttl 900, got %#v", config.TTLSecondsFinished)
@@ -227,6 +231,19 @@ func TestJobConfigFromEnvFallsBackForInvalidRunnerResources(t *testing.T) {
 
 	if got := config.Resources.Requests.Cpu().String(); got != defaultRunnerCPURequest {
 		t.Fatalf("expected default cpu request %q, got %q", defaultRunnerCPURequest, got)
+	}
+}
+
+func TestJobConfigFromEnvDefaultsInvalidGitHubCommentModeToUpsert(t *testing.T) {
+	config := JobConfigFromEnv(func(name string) string {
+		if name == "NOVA_SRE_GITHUB_COMMENT_MODE" {
+			return "replace"
+		}
+		return ""
+	})
+
+	if config.GitHubCommentMode != "upsert" {
+		t.Fatalf("expected invalid GitHub comment mode to default to upsert, got %q", config.GitHubCommentMode)
 	}
 }
 
@@ -318,6 +335,7 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	agent := &recordingAgent{}
 	observer := &recordingObserver{}
 	runner := JobRunner{
+		Config: JobConfig{GitHubCommentMode: "create"},
 		Watcher: &recordingWatcher{
 			result: JobResult{
 				Failed:  true,
@@ -380,6 +398,9 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	}
 	if agent.request.Reason != "BackoffLimitExceeded" || agent.request.Message != "runner exited 1" {
 		t.Fatalf("expected failure details, got reason=%q message=%q", agent.request.Reason, agent.request.Message)
+	}
+	if agent.request.GitHubCommentMode != "create" {
+		t.Fatalf("expected create comment mode, got %q", agent.request.GitHubCommentMode)
 	}
 	if got := observer.last().Status; got != "diagnosed" {
 		t.Fatalf("expected final observed status diagnosed, got %q in %#v", got, observer.updates)
@@ -507,11 +528,12 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}
 
 	response, err := client.Diagnose(context.Background(), DiagnoseRequest{
-		DeliveryID: "delivery-123",
-		Event:      "push",
-		Repository: "acme/widgets",
-		SHA:        "abcdef",
-		Logs:       []LogEntry{{Pod: "pod-1", Container: "runner", Logs: "boom"}},
+		DeliveryID:        "delivery-123",
+		Event:             "push",
+		Repository:        "acme/widgets",
+		SHA:               "abcdef",
+		Logs:              []LogEntry{{Pod: "pod-1", Container: "runner", Logs: "boom"}},
+		GitHubCommentMode: "create",
 	})
 	if err != nil {
 		t.Fatalf("Diagnose returned error: %v", err)
@@ -522,6 +544,9 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}
 	if len(got.Logs) != 1 || got.Logs[0].Logs != "boom" {
 		t.Fatalf("expected request logs, got %#v", got.Logs)
+	}
+	if got.GitHubCommentMode != "create" {
+		t.Fatalf("expected GitHub comment mode create, got %q", got.GitHubCommentMode)
 	}
 	if gotToken != "agent-token" {
 		t.Fatalf("expected agent token header, got %q", gotToken)

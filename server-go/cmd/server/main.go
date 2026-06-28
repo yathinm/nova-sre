@@ -53,6 +53,7 @@ func main() {
 		RunnerNamespace:      jobConfig.Namespace,
 		RunnerImage:          jobConfig.Image,
 		RunnerJobTTLSeconds:  int32Value(jobConfig.TTLSecondsFinished),
+		GitHubCommentMode:    jobConfig.GitHubCommentMode,
 	})
 	server.SetDeliveryCacheTTL(deliveryCacheTTL)
 	server.SetAPIToken(os.Getenv("NOVA_SRE_API_TOKEN"))

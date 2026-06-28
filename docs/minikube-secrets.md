@@ -41,6 +41,7 @@ The server deployment also sets:
 ```sh
 NOVA_SRE_AGENT_URL=http://nova-sre-agent.nova-sre.svc.cluster.local:8000
 NOVA_SRE_AGENT_TOKEN=<from nova-sre-secrets when configured>
+NOVA_SRE_GITHUB_COMMENT_MODE=upsert
 RUNNER_JOB_TTL_SECONDS=900
 RUNNER_JOB_COMMAND_PUSH=<optional push command>
 RUNNER_JOB_COMMAND_PULL_REQUEST=<optional pull request command>
@@ -77,10 +78,10 @@ event-specific variables are `RUNNER_JOB_COMMAND_PUSH`,
 The agent truncates normalized submitted logs to `NOVA_SRE_MAX_LOG_CHARS` before
 classification and optional LLM prompting. The default keeps diagnosis payloads
 bounded while preserving the beginning and end of oversized log streams.
-When `github_comment_mode` is omitted, diagnosis requests use `upsert` mode:
-the agent updates the existing hidden-marker Nova-SRE PR comment when present
-and creates one otherwise. Set `github_comment_mode=create` on a diagnosis
-request only when a fresh comment is explicitly desired.
+`NOVA_SRE_GITHUB_COMMENT_MODE` accepts `upsert` or `create`. The default
+`upsert` mode asks the agent to update the existing hidden-marker Nova-SRE PR
+comment when present and create one otherwise. Use `create` only for workflows
+that intentionally want a fresh PR comment for every failed diagnosis.
 The Go server also asks Kubernetes for at most
 `NOVA_SRE_RUNNER_LOG_LIMIT_BYTES` bytes per runner pod container before sending
 logs to the agent, keeping raw log collection bounded at the source.

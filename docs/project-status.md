@@ -10,12 +10,13 @@ activity, and Prometheus/Grafana wiring is present for pipeline metrics.
 
 ## Current Completion Estimate
 
-The project is roughly 70% through the local MVP.
+The project is roughly 82-85% through the local MVP.
 
 Completed work is concentrated in the local runtime, security hardening,
-validation, and observability foundation. The remaining work is mostly product
-depth and productionization: richer runner behavior, durable storage, production
-ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
+validation, observability foundation, local durability, and release
+preparation. The remaining work is mostly product depth and productionization:
+richer runner behavior, stronger end-to-end automation, production secret
+management, and a more complete operator control surface.
 
 ## Working Now
 
@@ -40,6 +41,9 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - GitHub PR comments include a hidden Nova-SRE marker, update the existing
   Nova-SRE diagnosis comment by default, support explicit create mode, and
   return sanitized create/update/skip/failure status for control-panel display.
+- Go runner diagnosis requests can set GitHub PR comment mode through
+  `NOVA_SRE_GITHUB_COMMENT_MODE`, and `/api/config` reports that non-secret
+  mode for the control panel.
 - Go runner log collection asks Kubernetes for a bounded number of pod log bytes
   before forwarding failed-job logs to the agent.
 - Server-to-agent `/diagnose` calls can be protected with
@@ -109,7 +113,7 @@ CI currently gates:
 - Add stronger end-to-end CI that can exercise a fake webhook through a local
   Kubernetes test environment without relying on a developer laptop.
 - Add richer GitHub PR comment controls in the control panel instead of only
-  accepting request-level create/upsert settings from the diagnosis API.
+  showing the server-level create/upsert mode.
 - Customize and harden the production ingress/TLS overlay for the target domain,
   ingress controller, certificate issuer, image registry, and secret manager.
 - Add environment-specific production secret-management automation for

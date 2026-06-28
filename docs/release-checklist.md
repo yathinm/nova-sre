@@ -107,6 +107,8 @@ Check that `/api/config` reports:
 - `agent_auth_enabled: true`
 - `api_cors_restricted: true`
 - `activity_store_enabled: true`
+- `github_comment_mode: upsert` unless the environment intentionally uses
+  create-only diagnosis comments
 
 Send a signed GitHub `ping` or redeliver a safe test event, then confirm it
 appears in the control panel and in `/api/events`.
