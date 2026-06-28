@@ -480,7 +480,70 @@ async def test_github_comment_client_handles_api_failure() -> None:
 
     assert result.posted is False
     assert result.url is None
-    assert result.error == "GitHub PR comment posting failed with HTTP 500."
+    assert result.error == "GitHub PR comment posting failed with HTTP 500: server error."
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_reports_permission_failures_without_token_leak() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "message": "Resource not accessible by integration",
+                "errors": [
+                    {
+                        "field": "body",
+                        "code": "missing",
+                        "message": "cannot create issue comment",
+                    }
+                ],
+            },
+        )
+
+    client = GitHubPullRequestCommentClient(
+        token="super-secret-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body="comment body",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is False
+    assert result.error is not None
+    assert "HTTP 403" in result.error
+    assert "check GITHUB_TOKEN permissions" in result.error
+    assert "Resource not accessible by integration" in result.error
+    assert "cannot create issue comment" in result.error
+    assert "super-secret-token" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_caps_error_detail() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="x" * 500)
+
+    client = GitHubPullRequestCommentClient(
+        token="test-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body="comment body",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is False
+    assert result.error is not None
+    assert len(result.error) < 320
+    assert result.error.endswith("....")
 
 
 @pytest.mark.asyncio
