@@ -15,11 +15,24 @@ spec:
       labels:
         app: nova-sre-agent
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent
           image: nova-sre-agent:local
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
           env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
