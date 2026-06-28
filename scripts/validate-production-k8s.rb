@@ -34,6 +34,12 @@ end
 
 server = documents.find { |doc| doc["kind"] == "Deployment" && doc.dig("metadata", "name") == "nova-sre-server" }
 expect(errors, !server.nil?, "production overlay must render the server Deployment")
+deployments = documents.select { |doc| doc["kind"] == "Deployment" }
+images = deployments.flat_map { |deployment| Array(deployment.dig("spec", "template", "spec", "containers")).map { |container| container["image"].to_s } }
+expect(errors, images.none? { |image| image.end_with?(":local") },
+       "production overlay must replace local image tags")
+expect(errors, images.all? { |image| image.start_with?("registry.example.com/nova-sre/") },
+       "production overlay images must use the configured production registry placeholder")
 if server
   containers = Array(server.dig("spec", "template", "spec", "containers"))
   server_container = containers.find { |container| container["name"] == "server" }
@@ -59,4 +65,4 @@ if errors.any?
   exit 1
 end
 
-puts "Validated production Kubernetes overlay: TLS ingress, API auth/CORS wiring, and activity PVC"
+puts "Validated production Kubernetes overlay: TLS ingress, production images, API auth/CORS wiring, and activity PVC"

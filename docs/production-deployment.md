@@ -25,14 +25,16 @@ Before applying it to a real cluster:
   cluster, or remove the annotation and pre-create the `nova-sre-tls` secret.
 - Confirm the ingress controller supports `ingressClassName: nginx`, or change
   it to the target cluster's ingress class.
+- Replace the `images` entries in `k8s/overlays/production/kustomization.yaml`
+  with the target registry and immutable release tag.
 - Set `NOVA_SRE_ALLOWED_ORIGINS` in `nova-sre-secrets` to the final HTTPS
   frontend origin, for example `https://nova-sre.example.com`.
 - Set `NOVA_SRE_API_TOKEN` for the control-panel API before exposing `/api/*`
   beyond an isolated local demo.
 
 `make validate-production-k8s` renders the overlay and checks that TLS ingress,
-the activity PVC, `NOVA_SRE_API_TOKEN`, and `NOVA_SRE_ALLOWED_ORIGINS` wiring
-remain present.
+production image replacements, the activity PVC, `NOVA_SRE_API_TOKEN`, and
+`NOVA_SRE_ALLOWED_ORIGINS` wiring remain present.
 
 The overlay routes:
 

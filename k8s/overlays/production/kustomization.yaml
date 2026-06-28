@@ -13,3 +13,13 @@ patches:
       version: v1
       kind: Deployment
       name: nova-sre-server
+images:
+  - name: nova-sre-server
+    newName: registry.example.com/nova-sre/server
+    newTag: replace-with-release-tag
+  - name: nova-sre-agent
+    newName: registry.example.com/nova-sre/agent
+    newTag: replace-with-release-tag
+  - name: nova-sre-frontend
+    newName: registry.example.com/nova-sre/frontend
+    newTag: replace-with-release-tag
