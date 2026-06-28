@@ -300,6 +300,64 @@ h2 {
   color: #663c00;
 }
 
+.breakdown-panel {
+  grid-column: 1 / -1;
+}
+
+.breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 18px;
+}
+
+.breakdown-list {
+  min-width: 0;
+}
+
+.breakdown-list h3 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.breakdown-list ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.breakdown-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fbfcfd;
+}
+
+.breakdown-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breakdown-list strong {
+  color: var(--accent-strong);
+}
+
+.breakdown-list p {
+  margin: 0;
+  color: var(--muted);
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -410,6 +468,10 @@ tbody tr:last-child td {
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .breakdown-grid {
+    grid-template-columns: 1fr;
   }
 }
 
