@@ -41,6 +41,7 @@ Install the Terraform-managed observability stack:
 
 ```sh
 make tf-init
+make tf-plan
 make tf-apply
 ```
 
@@ -49,6 +50,19 @@ Terraform creates the `observability` namespace and installs:
 - Prometheus from the `prometheus-community/prometheus` Helm chart.
 - Grafana from the `grafana/grafana` Helm chart.
 - A Grafana dashboard ConfigMap for `dashboards/pipeline-stats.json`.
+
+If Prometheus, Grafana, or the dashboard ConfigMap already exist in Minikube but
+your checkout has no local Terraform state, adopt those resources before applying:
+
+```sh
+make tf-import-observability
+make tf-plan
+```
+
+Only run `make tf-apply` after the plan no longer proposes recreating the existing
+observability namespace, Helm releases, or dashboard ConfigMap. In-place Helm
+release updates after import are expected when Terraform is reconciling the
+checked-in values files with the release metadata it just adopted.
 
 Confirm the pods and services exist:
 

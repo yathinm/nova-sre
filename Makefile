@@ -2,7 +2,7 @@ PROFILE=nova-sre
 PYTHON ?= python3
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
-        tf-init tf-apply tf-destroy docker-env docker-build deploy-apps \
+        tf-init tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
         validate-metrics run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
@@ -36,11 +36,20 @@ dashboard: ## Open Minikube dashboard
 tf-init: ## Initialise Terraform
 	cd terraform && terraform init
 
+tf-plan: ## Preview Terraform changes
+	cd terraform && terraform plan
+
 tf-apply: ## Terraform apply
 	cd terraform && terraform apply
 
 tf-destroy: ## Terraform destroy
 	cd terraform && terraform destroy
+
+tf-import-observability: ## Import existing local observability resources into Terraform state
+	cd terraform && terraform import kubernetes_namespace.observability observability
+	cd terraform && terraform import helm_release.prometheus observability/prometheus
+	cd terraform && terraform import helm_release.grafana observability/grafana
+	cd terraform && terraform import kubernetes_config_map.grafana_pipeline_dashboard observability/grafana-dashboard-nova-sre-pipeline
 
 # ── Docker (inside Minikube) ──────────────────────────────────────────────────
 
