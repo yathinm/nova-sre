@@ -51,6 +51,9 @@ ingress/TLS, broader GitHub event handling, and stronger end-to-end automation.
 - A production-oriented Kubernetes overlay now provides starter TLS ingress and
   PVC-backed activity storage manifests, with validation for TLS, API auth/CORS
   secret wiring, and the activity PVC.
+- A release checklist now covers preflight validation, image publishing,
+  production overlay customization, rollout, smoke tests, monitoring, and
+  rollback.
 - Runtime config reports whether server-to-agent auth is enabled without exposing
   the shared token.
 - Frontend nginx serves CSP, frame, referrer, permissions, and MIME hardening
@@ -109,7 +112,8 @@ CI currently gates:
 - Add environment-specific production secret-management automation for
   `NOVA_SRE_API_TOKEN`, `NOVA_SRE_ALLOWED_ORIGINS`, GitHub credentials, and
   agent auth.
-- Add release/deployment documentation for non-local environments.
+- Automate image tag promotion and production overlay image patching for
+  repeatable non-local releases.
 
 ## Useful Verification Commands
 
