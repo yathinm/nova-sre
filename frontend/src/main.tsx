@@ -228,10 +228,13 @@ function App() {
             onChange={(event) => setApiToken(event.target.value)}
           />
           <div className="refresh-row">
-            <span>{lastRefreshAt ? `Updated ${formatTime(lastRefreshAt, "time")}` : "Waiting for first refresh"}</span>
+            <span className="live-indicator">
+              <span className={paused ? "live-dot paused" : "live-dot"} />
+              {lastRefreshAt ? `Updated ${formatTime(lastRefreshAt, "time")}` : "Waiting for first refresh"}
+            </span>
             <label className="pause-toggle">
               <input type="checkbox" checked={paused} onChange={(event) => setPaused(event.target.checked)} />
-              Pause auto-refresh
+              Pause
             </label>
           </div>
         </form>
