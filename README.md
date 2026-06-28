@@ -34,7 +34,8 @@ runner activity. Grafana remains the stats frontend for Prometheus dashboards;
 run `make port-forward-grafana` after Terraform installs the Helm release and
 open `http://localhost:3000`. See
 [docs/control-panel-demo.md](docs/control-panel-demo.md) for the end-to-end local
-demo workflow.
+demo workflow, and [docs/project-status.md](docs/project-status.md) for the
+current completion snapshot and remaining MVP work.
 
 ## Local Prerequisites
 
