@@ -250,6 +250,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax checks. |
 | `make validate-scripts` | Checks repository Ruby helper scripts for syntax errors. |
 | `make validate-secrets` | Checks tracked files for real-looking committed secrets while allowing documented placeholders. |
+| `make validate-cluster-runtime` | Checks live Kubernetes deployments, services, agent health, and unauthenticated agent rejection. |
 | `make validate-observability-config` | Checks Prometheus scrape config, Grafana datasource provisioning, and dashboard metric queries. |
 | `make validate-local-runtime` | Checks the local API and frontend port-forwards for health, metrics, CORS, runtime config, summary, and control-panel HTML. |
 | `make validate-webhook-tunnel` | Checks a public webhook tunnel's `/healthz` and `/webhook`; sends a signed `ping` when `GITHUB_WEBHOOK_SECRET` is set. |
