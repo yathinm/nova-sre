@@ -207,7 +207,7 @@ function App() {
           card={{
             label: "Recent Events",
             value: String(events.items.length),
-            detail: summaryDetail(events, "delivery"),
+            detail: summaryDetail(events, "delivery", "deliveries"),
             tone: toneForList(events),
           }}
         />
@@ -215,7 +215,7 @@ function App() {
           card={{
             label: "Recent Jobs",
             value: String(jobs.items.length),
-            detail: summaryDetail(jobs, "job"),
+            detail: summaryDetail(jobs, "job", "jobs"),
             tone: toneForList(jobs),
           }}
         />
@@ -587,7 +587,7 @@ function toneForList(list: ListState<ApiRecord>): Tone {
   return "warn";
 }
 
-function summaryDetail(list: ListState<ApiRecord>, noun: string) {
+function summaryDetail(list: ListState<ApiRecord>, singular: string, plural: string) {
   if (list.status === "loading") {
     return "Refreshing from API";
   }
@@ -595,9 +595,9 @@ function summaryDetail(list: ListState<ApiRecord>, noun: string) {
     return list.message || "Could not load data";
   }
   if (list.items.length) {
-    return `${list.items.length} recent ${noun}${list.items.length === 1 ? "" : "s"} loaded`;
+    return `${list.items.length} recent ${list.items.length === 1 ? singular : plural} loaded`;
   }
-  return `No recent ${noun}s`;
+  return `No recent ${plural}`;
 }
 
 function parseDate(value: string) {
