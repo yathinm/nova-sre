@@ -554,6 +554,7 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 	server.SetRuntimeConfig(runtimeConfig{
 		ActivityLimit:       25,
 		DeliveryCacheTTL:    "5m0s",
+		AgentAuthEnabled:    true,
 		RunnerNamespace:     "runner-jobs",
 		RunnerImage:         "nova-sre-runner:local",
 		RunnerJobTTLSeconds: 900,
@@ -578,6 +579,9 @@ func TestAPIConfigReportsRuntimeSettings(t *testing.T) {
 	}
 	if !config.APIAuthEnabled {
 		t.Fatalf("expected api auth to be enabled: %#v", config)
+	}
+	if !config.AgentAuthEnabled {
+		t.Fatalf("expected agent auth to be enabled: %#v", config)
 	}
 	if !config.APICORSRestricted {
 		t.Fatalf("expected api cors to be restricted: %#v", config)

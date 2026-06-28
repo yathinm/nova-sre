@@ -43,6 +43,7 @@ func main() {
 	server.SetRuntimeConfig(runtimeConfig{
 		ActivityLimit:       activityLimit,
 		DeliveryCacheTTL:    deliveryCacheTTL.String(),
+		AgentAuthEnabled:    strings.TrimSpace(os.Getenv("NOVA_SRE_AGENT_TOKEN")) != "",
 		RunnerNamespace:     jobConfig.Namespace,
 		RunnerImage:         jobConfig.Image,
 		RunnerJobTTLSeconds: int32Value(jobConfig.TTLSecondsFinished),
