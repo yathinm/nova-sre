@@ -108,6 +108,24 @@ In GitHub, open the repository settings, then **Webhooks**.
 GitHub signs each delivery with `X-Hub-Signature-256`. If the secret differs from
 the server environment, Nova-SRE returns `401`.
 
+Before redelivering from GitHub, validate the public tunnel:
+
+```sh
+WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com make validate-webhook-tunnel
+```
+
+That checks `/healthz` and confirms `/webhook` is reachable. To also verify the
+signature path, include the same secret used by the running server:
+
+```sh
+WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com \
+  GITHUB_WEBHOOK_SECRET="$GITHUB_WEBHOOK_SECRET" \
+  make validate-webhook-tunnel
+```
+
+The signed check sends a supported `ping` delivery, so use it only when you want
+Nova-SRE to exercise the webhook enqueue path.
+
 ## Webhook Delivery Troubleshooting
 
 In GitHub delivery history, `failed to connect to host` means GitHub could not
@@ -117,8 +135,7 @@ tunnel, update the Payload URL, and verify the public route before redelivering:
 
 ```sh
 cloudflared tunnel --url http://localhost:8080
-curl -fsS https://example-tunnel.trycloudflare.com/healthz
-curl -i https://example-tunnel.trycloudflare.com/webhook
+WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com make validate-webhook-tunnel
 ```
 
 The `/webhook` GET check should return `405 Method Not Allowed` with

@@ -197,6 +197,20 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
    In GitHub, set the webhook payload URL to the tunnel URL plus `/webhook`. Use
    the same webhook secret in GitHub and `GITHUB_WEBHOOK_SECRET`.
 
+   Before redelivering from GitHub, validate the public route:
+
+   ```sh
+   WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com make validate-webhook-tunnel
+   ```
+
+   Add `GITHUB_WEBHOOK_SECRET` to send a signed `ping` delivery through Nova-SRE:
+
+   ```sh
+   WEBHOOK_BASE_URL=https://example-tunnel.trycloudflare.com \
+     GITHUB_WEBHOOK_SECRET="$GITHUB_WEBHOOK_SECRET" \
+     make validate-webhook-tunnel
+   ```
+
 13. Follow the event through the local pipeline:
 
    - GitHub sends the webhook to the public tunnel.
@@ -234,6 +248,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make validate-metrics` | Curls `http://localhost:8080/metrics` and checks for Prometheus metrics. |
 | `make validate-api-cors` | Checks browser CORS headers on `/healthz`, `/metrics`, and `/api/config`. |
 | `make validate-k8s` | Runs client-side validation for Kubernetes app manifests. Use `KUBECTL_VALIDATE=false` for offline CI syntax checks. |
+| `make validate-webhook-tunnel` | Checks a public webhook tunnel's `/healthz` and `/webhook`; sends a signed `ping` when `GITHUB_WEBHOOK_SECRET` is set. |
 | `make run-server` | Runs the Go API locally on `localhost:8080`. |
 | `make run-frontend` | Runs the React control panel locally on `localhost:5173`. |
 | `make test-go` | Runs Go tests under `server-go/`. |
