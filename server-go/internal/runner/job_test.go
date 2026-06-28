@@ -32,7 +32,7 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	}, Event{
 		DeliveryID: "delivery-123",
 		Type:       "push",
-		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abcdef1234567890"}`),
+		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"ref":"refs/heads/main","before":"0000000000000000","after":"abcdef1234567890"}`),
 		ReceivedAt: receivedAt,
 	})
 	if err != nil {
@@ -73,12 +73,26 @@ func TestBuildGitHubEventJobUsesConfigAndWebhookMetadata(t *testing.T) {
 	if got := container.Command; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--once" {
 		t.Fatalf("unexpected command: %#v", got)
 	}
+	if got := container.Resources.Requests.Cpu().String(); got != defaultRunnerCPURequest {
+		t.Fatalf("expected default cpu request %q, got %q", defaultRunnerCPURequest, got)
+	}
+	if got := container.Resources.Requests.Memory().String(); got != defaultRunnerMemoryRequest {
+		t.Fatalf("expected default memory request %q, got %q", defaultRunnerMemoryRequest, got)
+	}
+	if got := container.Resources.Limits.Cpu().String(); got != defaultRunnerCPULimit {
+		t.Fatalf("expected default cpu limit %q, got %q", defaultRunnerCPULimit, got)
+	}
+	if got := container.Resources.Limits.Memory().String(); got != defaultRunnerMemoryLimit {
+		t.Fatalf("expected default memory limit %q, got %q", defaultRunnerMemoryLimit, got)
+	}
 
 	assertEnv(t, container.Env, "GITHUB_EVENT_NAME", "push")
 	assertEnv(t, container.Env, "GITHUB_DELIVERY_ID", "delivery-123")
 	assertEnv(t, container.Env, "GITHUB_REPOSITORY", "acme/widgets")
 	assertEnv(t, container.Env, "GITHUB_SHA", "abcdef1234567890")
-	assertEnv(t, container.Env, "GITHUB_EVENT_PAYLOAD", `{"repository":{"full_name":"acme/widgets"},"after":"abcdef1234567890"}`)
+	assertEnv(t, container.Env, "GITHUB_REF", "refs/heads/main")
+	assertEnv(t, container.Env, "GITHUB_BEFORE", "0000000000000000")
+	assertEnv(t, container.Env, "GITHUB_EVENT_PAYLOAD", `{"repository":{"full_name":"acme/widgets"},"ref":"refs/heads/main","before":"0000000000000000","after":"abcdef1234567890"}`)
 
 	if job.Labels["nova-sre.io/event"] != "push" {
 		t.Fatalf("expected event label push, got %q", job.Labels["nova-sre.io/event"])
@@ -101,10 +115,17 @@ func TestBuildGitHubEventJobExtractsPullRequestMetadata(t *testing.T) {
 		DeliveryID: "delivery-123",
 		Type:       "pull_request",
 		Body: []byte(`{
+			"action": "opened",
 			"pull_request": {
+				"number": 42,
+				"html_url": "https://github.com/acme/pr-source/pull/42",
 				"head": {
 					"sha": "0123456789abcdef",
+					"ref": "feature/context",
 					"repo": {"full_name": "acme/pr-source"}
+				},
+				"base": {
+					"ref": "main"
 				}
 			}
 		}`),
@@ -115,6 +136,11 @@ func TestBuildGitHubEventJobExtractsPullRequestMetadata(t *testing.T) {
 
 	assertContainerEnv(t, job, "GITHUB_REPOSITORY", "acme/pr-source")
 	assertContainerEnv(t, job, "GITHUB_SHA", "0123456789abcdef")
+	assertContainerEnv(t, job, "GITHUB_ACTION", "opened")
+	assertContainerEnv(t, job, "GITHUB_PR_NUMBER", "42")
+	assertContainerEnv(t, job, "GITHUB_PR_URL", "https://github.com/acme/pr-source/pull/42")
+	assertContainerEnv(t, job, "GITHUB_HEAD_REF", "feature/context")
+	assertContainerEnv(t, job, "GITHUB_BASE_REF", "main")
 	if job.Namespace != defaultNamespace {
 		t.Fatalf("expected default namespace %q, got %q", defaultNamespace, job.Namespace)
 	}
@@ -131,6 +157,209 @@ func TestBuildGitHubEventJobRequiresRunnerImage(t *testing.T) {
 	}
 }
 
+func TestJobConfigFromEnvParsesRunnerSettings(t *testing.T) {
+	values := map[string]string{
+		"RUNNER_JOB_NAMESPACE":                    "runner-jobs",
+		"RUNNER_JOB_IMAGE":                        "ghcr.io/example/nova-runner:test",
+		"RUNNER_REPO":                             "acme/widgets",
+		"RUNNER_SHA":                              "abcdef",
+		"RUNNER_JOB_COMMAND":                      "/bin/runner --once",
+		"RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES": "acme/widgets=/bin/runner --repo\nother/service=/bin/runner --other",
+		"RUNNER_JOB_COMMAND_PULL_REQUEST":         "/bin/runner --pull-request",
+		"RUNNER_JOB_COMMAND_WORKFLOW_RUN":         "/bin/runner --workflow-run",
+		"NOVA_SRE_GITHUB_COMMENT_MODE":            "create",
+		"RUNNER_JOB_TTL_SECONDS":                  "900",
+		"RUNNER_JOB_BACKOFF_LIMIT":                "2",
+		"RUNNER_JOB_SERVICE_ACCOUNT":              "nova-runner",
+		"RUNNER_JOB_CPU_REQUEST":                  "150m",
+		"RUNNER_JOB_MEMORY_REQUEST":               "160Mi",
+		"RUNNER_JOB_CPU_LIMIT":                    "750m",
+		"RUNNER_JOB_MEMORY_LIMIT":                 "384Mi",
+	}
+
+	config := JobConfigFromEnv(func(name string) string {
+		return values[name]
+	})
+
+	if config.Namespace != "runner-jobs" || config.Image != "ghcr.io/example/nova-runner:test" {
+		t.Fatalf("unexpected namespace/image: %#v", config)
+	}
+	if config.Repo != "acme/widgets" || config.SHA != "abcdef" {
+		t.Fatalf("unexpected repo metadata: %#v", config)
+	}
+	if got := config.Command; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--once" {
+		t.Fatalf("unexpected command: %#v", got)
+	}
+	if got := config.CommandByEvent["pull_request"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--pull-request" {
+		t.Fatalf("unexpected pull_request command override: %#v", got)
+	}
+	if got := config.CommandByEvent["workflow_run"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--workflow-run" {
+		t.Fatalf("unexpected workflow_run command override: %#v", got)
+	}
+	if got := config.CommandByRepository["acme/widgets"]; len(got) != 2 || got[0] != "/bin/runner" || got[1] != "--repo" {
+		t.Fatalf("unexpected repository command override: %#v", got)
+	}
+	if config.GitHubCommentMode != "create" {
+		t.Fatalf("expected GitHub comment mode create, got %q", config.GitHubCommentMode)
+	}
+	if config.TTLSecondsFinished == nil || *config.TTLSecondsFinished != 900 {
+		t.Fatalf("expected ttl 900, got %#v", config.TTLSecondsFinished)
+	}
+	if config.BackoffLimit == nil || *config.BackoffLimit != 2 {
+		t.Fatalf("expected backoff 2, got %#v", config.BackoffLimit)
+	}
+	if config.ServiceAccountName != "nova-runner" {
+		t.Fatalf("expected service account nova-runner, got %q", config.ServiceAccountName)
+	}
+	if got := config.Resources.Requests.Cpu().String(); got != "150m" {
+		t.Fatalf("expected cpu request 150m, got %q", got)
+	}
+	if got := config.Resources.Requests.Memory().String(); got != "160Mi" {
+		t.Fatalf("expected memory request 160Mi, got %q", got)
+	}
+	if got := config.Resources.Limits.Cpu().String(); got != "750m" {
+		t.Fatalf("expected cpu limit 750m, got %q", got)
+	}
+	if got := config.Resources.Limits.Memory().String(); got != "384Mi" {
+		t.Fatalf("expected memory limit 384Mi, got %q", got)
+	}
+}
+
+func TestJobConfigFromEnvFallsBackForInvalidRunnerResources(t *testing.T) {
+	config := JobConfigFromEnv(func(name string) string {
+		if name == "RUNNER_JOB_CPU_REQUEST" {
+			return "not-a-quantity"
+		}
+		return ""
+	})
+
+	if got := config.Resources.Requests.Cpu().String(); got != defaultRunnerCPURequest {
+		t.Fatalf("expected default cpu request %q, got %q", defaultRunnerCPURequest, got)
+	}
+}
+
+func TestJobConfigFromEnvDefaultsInvalidGitHubCommentModeToUpsert(t *testing.T) {
+	config := JobConfigFromEnv(func(name string) string {
+		if name == "NOVA_SRE_GITHUB_COMMENT_MODE" {
+			return "replace"
+		}
+		return ""
+	})
+
+	if config.GitHubCommentMode != "upsert" {
+		t.Fatalf("expected invalid GitHub comment mode to default to upsert, got %q", config.GitHubCommentMode)
+	}
+}
+
+func TestParseRunnerCommandSupportsShellScripts(t *testing.T) {
+	got := parseRunnerCommand("/bin/sh -c set -eu; go test ./...")
+	want := []string{"/bin/sh", "-c", "set -eu; go test ./..."}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected command length: got %#v want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected command[%d]: got %q want %q", i, got[i], want[i])
+		}
+	}
+
+	fields := parseRunnerCommand("/bin/runner --pull-request")
+	if len(fields) != 2 || fields[0] != "/bin/runner" || fields[1] != "--pull-request" {
+		t.Fatalf("expected tokenized command, got %#v", fields)
+	}
+}
+
+func TestBuildGitHubEventJobUsesEventCommandOverride(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByEvent: map[string][]string{
+			"pull_request": {"/bin/runner", "--pull-request"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "pull_request",
+		Body:       []byte(`{"pull_request":{"head":{"sha":"abc","repo":{"full_name":"acme/widgets"}}}}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--pull-request" {
+		t.Fatalf("expected event-specific command, got %#v", command)
+	}
+}
+
+func TestBuildGitHubEventJobUsesRepositoryCommandOverride(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByRepository: map[string][]string{
+			"acme/widgets": {"/bin/runner", "--repo"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "push",
+		Body:       []byte(`{"repository":{"full_name":"Acme/Widgets"},"after":"abc"}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--repo" {
+		t.Fatalf("expected repository-specific command, got %#v", command)
+	}
+}
+
+func TestBuildGitHubEventJobPrefersEventCommandOverRepositoryCommand(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByEvent: map[string][]string{
+			"pull_request": {"/bin/runner", "--pull-request"},
+		},
+		CommandByRepository: map[string][]string{
+			"acme/widgets": {"/bin/runner", "--repo"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "pull_request",
+		Body:       []byte(`{"pull_request":{"head":{"sha":"abc","repo":{"full_name":"acme/widgets"}}}}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--pull-request" {
+		t.Fatalf("expected event-specific command to win, got %#v", command)
+	}
+}
+
+func TestBuildGitHubEventJobFallsBackToGlobalCommand(t *testing.T) {
+	job, err := BuildGitHubEventJob(JobConfig{
+		Image:   "ghcr.io/example/nova-runner:test",
+		Command: []string{"/bin/runner", "--default"},
+		CommandByEvent: map[string][]string{
+			"pull_request": {"/bin/runner", "--pull-request"},
+		},
+	}, Event{
+		DeliveryID: "delivery-123",
+		Type:       "push",
+		Body:       []byte(`{"repository":{"full_name":"acme/widgets"},"after":"abc"}`),
+	})
+	if err != nil {
+		t.Fatalf("BuildGitHubEventJob returned error: %v", err)
+	}
+
+	command := job.Spec.Template.Spec.Containers[0].Command
+	if len(command) != 2 || command[1] != "--default" {
+		t.Fatalf("expected global command fallback, got %#v", command)
+	}
+}
+
 func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	creator := &recordingCreator{}
 	runner := NewJobRunner(JobConfig{
@@ -140,7 +369,19 @@ func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	if err := runner.EnqueueGitHubEvent(context.Background(), Event{
 		DeliveryID: "delivery-123",
 		Type:       "workflow_run",
-		Body:       []byte(`{"workflow_run":{"head_sha":"abc","repository":{"full_name":"acme/widgets"}}}`),
+		Body: []byte(`{
+			"action": "completed",
+			"workflow_run": {
+				"id": 123456,
+				"name": "CI",
+				"html_url": "https://github.com/acme/widgets/actions/runs/123456",
+				"status": "completed",
+				"conclusion": "failure",
+				"run_attempt": 2,
+				"head_sha": "abc",
+				"repository": {"full_name": "acme/widgets"}
+			}
+		}`),
 	}); err != nil {
 		t.Fatalf("EnqueueGitHubEvent returned error: %v", err)
 	}
@@ -150,11 +391,20 @@ func TestJobRunnerCanUseStubCreatorWithoutCluster(t *testing.T) {
 	}
 	assertContainerEnv(t, creator.created, "GITHUB_REPOSITORY", "acme/widgets")
 	assertContainerEnv(t, creator.created, "GITHUB_SHA", "abc")
+	assertContainerEnv(t, creator.created, "GITHUB_ACTION", "completed")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_RUN_ID", "123456")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_NAME", "CI")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_RUN_URL", "https://github.com/acme/widgets/actions/runs/123456")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_STATUS", "completed")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_CONCLUSION", "failure")
+	assertContainerEnv(t, creator.created, "GITHUB_WORKFLOW_RUN_ATTEMPT", "2")
 }
 
 func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	agent := &recordingAgent{}
+	observer := &recordingObserver{}
 	runner := JobRunner{
+		Config: JobConfig{GitHubCommentMode: "create"},
 		Watcher: &recordingWatcher{
 			result: JobResult{
 				Failed:  true,
@@ -169,7 +419,8 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 				Logs:      "panic: missing config",
 			}},
 		},
-		Agent: agent,
+		Agent:    agent,
+		Observer: observer,
 		Now: func() time.Time {
 			return time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 		},
@@ -217,6 +468,41 @@ func TestJobRunnerSendsFailedJobLogsToAgent(t *testing.T) {
 	if agent.request.Reason != "BackoffLimitExceeded" || agent.request.Message != "runner exited 1" {
 		t.Fatalf("expected failure details, got reason=%q message=%q", agent.request.Reason, agent.request.Message)
 	}
+	if agent.request.GitHubCommentMode != "create" {
+		t.Fatalf("expected create comment mode, got %q", agent.request.GitHubCommentMode)
+	}
+	if got := observer.last().Status; got != "diagnosed" {
+		t.Fatalf("expected final observed status diagnosed, got %q in %#v", got, observer.updates)
+	}
+}
+
+func TestJobRunnerReportsGitHubCommentErrors(t *testing.T) {
+	agent := &recordingAgent{
+		response: DiagnoseResponse{
+			GitHubCommentError:  "GitHub PR comment lookup failed with HTTP 403; check GITHUB_TOKEN permissions for issue comments.",
+			GitHubCommentAction: "failed",
+		},
+	}
+	observer := &recordingObserver{}
+	runner := JobRunner{
+		Watcher:      &recordingWatcher{result: JobResult{Failed: true, Reason: "BackoffLimitExceeded", Message: "runner exited 1"}},
+		LogCollector: &recordingLogCollector{logs: []LogEntry{{Logs: "failed"}}},
+		Agent:        agent,
+		Observer:     observer,
+		Logger:       log.New(io.Discard, "", 0),
+	}
+
+	runner.runFailureCallback(context.Background(), &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "runner-jobs", Name: "failed-job"},
+	}, Event{DeliveryID: "delivery-123", Type: "push", Body: []byte(`{}`)})
+
+	update := observer.last()
+	if update.Status != "diagnosis_comment_error" || update.Reason != "GitHubCommentFailed" {
+		t.Fatalf("expected GitHub comment error observation, got %#v", update)
+	}
+	if update.Message != agent.response.GitHubCommentError {
+		t.Fatalf("expected sanitized comment error, got %q", update.Message)
+	}
 }
 
 func TestJobRunnerSkipsAgentForSuccessfulJob(t *testing.T) {
@@ -239,10 +525,12 @@ func TestJobRunnerSkipsAgentForSuccessfulJob(t *testing.T) {
 
 func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
 	agent := &recordingAgent{err: errors.New("agent unavailable")}
+	observer := &recordingObserver{}
 	runner := JobRunner{
 		Watcher:      &recordingWatcher{result: JobResult{Failed: true}},
 		LogCollector: &recordingLogCollector{logs: []LogEntry{{Logs: "failed"}}},
 		Agent:        agent,
+		Observer:     observer,
 		Logger:       log.New(io.Discard, "", 0),
 	}
 
@@ -253,10 +541,36 @@ func TestJobRunnerHandlesAgentErrorsGracefully(t *testing.T) {
 	if !agent.called {
 		t.Fatal("expected best-effort agent call")
 	}
+	update := observer.last()
+	if update.Status != "diagnosis_error" || update.Reason != "DiagnosisRequestFailed" {
+		t.Fatalf("expected diagnosis error observation, got %#v", update)
+	}
+}
+
+func TestKubernetesJobLogCollectorUsesDefaultLogLimit(t *testing.T) {
+	collector := KubernetesJobLogCollector{}
+	options := collector.podLogOptions("runner")
+
+	if options.Container != "runner" {
+		t.Fatalf("expected container runner, got %q", options.Container)
+	}
+	if options.LimitBytes == nil || *options.LimitBytes != DefaultRunnerLogLimitBytes {
+		t.Fatalf("expected default log limit %d, got %#v", DefaultRunnerLogLimitBytes, options.LimitBytes)
+	}
+}
+
+func TestKubernetesJobLogCollectorUsesConfiguredLogLimit(t *testing.T) {
+	collector := KubernetesJobLogCollector{LogLimitBytes: 4096}
+	options := collector.podLogOptions("runner")
+
+	if options.LimitBytes == nil || *options.LimitBytes != 4096 {
+		t.Fatalf("expected configured log limit 4096, got %#v", options.LimitBytes)
+	}
 }
 
 func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	var got DiagnoseRequest
+	var gotToken string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
@@ -264,24 +578,31 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 		if r.URL.Path != "/diagnose" {
 			t.Fatalf("expected /diagnose path, got %s", r.URL.Path)
 		}
+		gotToken = r.Header.Get("X-Nova-SRE-Agent-Token")
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{
+			"github_comment_posted": true,
+			"github_comment_url": "https://github.com/acme/widgets/pull/42#issuecomment-1",
+			"github_comment_action": "updated"
+		}`))
 	}))
 	defer server.Close()
 
-	client, err := NewHTTPAgentClient(server.URL, time.Second)
+	client, err := NewHTTPAgentClient(server.URL, time.Second, "agent-token")
 	if err != nil {
 		t.Fatalf("NewHTTPAgentClient returned error: %v", err)
 	}
 
-	err = client.Diagnose(context.Background(), DiagnoseRequest{
-		DeliveryID: "delivery-123",
-		Event:      "push",
-		Repository: "acme/widgets",
-		SHA:        "abcdef",
-		Logs:       []LogEntry{{Pod: "pod-1", Container: "runner", Logs: "boom"}},
+	response, err := client.Diagnose(context.Background(), DiagnoseRequest{
+		DeliveryID:        "delivery-123",
+		Event:             "push",
+		Repository:        "acme/widgets",
+		SHA:               "abcdef",
+		Logs:              []LogEntry{{Pod: "pod-1", Container: "runner", Logs: "boom"}},
+		GitHubCommentMode: "create",
 	})
 	if err != nil {
 		t.Fatalf("Diagnose returned error: %v", err)
@@ -292,6 +613,15 @@ func TestHTTPAgentClientPostsDiagnoseRequest(t *testing.T) {
 	}
 	if len(got.Logs) != 1 || got.Logs[0].Logs != "boom" {
 		t.Fatalf("expected request logs, got %#v", got.Logs)
+	}
+	if got.GitHubCommentMode != "create" {
+		t.Fatalf("expected GitHub comment mode create, got %q", got.GitHubCommentMode)
+	}
+	if gotToken != "agent-token" {
+		t.Fatalf("expected agent token header, got %q", gotToken)
+	}
+	if !response.GitHubCommentPosted || response.GitHubCommentAction != "updated" {
+		t.Fatalf("expected parsed GitHub comment response, got %#v", response)
 	}
 }
 
@@ -386,15 +716,31 @@ func (c *recordingLogCollector) CollectJobLogs(_ context.Context, _ string, _ st
 }
 
 type recordingAgent struct {
-	called  bool
-	request DiagnoseRequest
-	err     error
+	called   bool
+	request  DiagnoseRequest
+	response DiagnoseResponse
+	err      error
 }
 
-func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) error {
+func (a *recordingAgent) Diagnose(_ context.Context, request DiagnoseRequest) (DiagnoseResponse, error) {
 	a.called = true
 	a.request = request
-	return a.err
+	return a.response, a.err
+}
+
+type recordingObserver struct {
+	updates []JobStatusUpdate
+}
+
+func (o *recordingObserver) ObserveJob(update JobStatusUpdate) {
+	o.updates = append(o.updates, update)
+}
+
+func (o *recordingObserver) last() JobStatusUpdate {
+	if len(o.updates) == 0 {
+		return JobStatusUpdate{}
+	}
+	return o.updates[len(o.updates)-1]
 }
 
 func sequenceClock(times ...time.Time) func() time.Time {

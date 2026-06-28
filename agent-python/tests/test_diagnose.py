@@ -2,16 +2,19 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.clients.github_comments import GitHubPullRequestCommentClient
+from app.clients.github_comments import (
+    NOVA_SRE_COMMENT_MARKER,
+    GitHubCommentMode,
+    GitHubPullRequestCommentClient,
+)
 from app.graph.diagnosis_graph import (
     build_graph,
     classify_failure,
     generate_proposed_fix,
     validate_markdown,
-    validate_pr_comment,
 )
 from app.main import app, github_comment_client
-from app.models.schemas import DiagnosisState
+from app.models.schemas import DiagnosisRequest, DiagnosisState, TRUNCATED_LOG_NOTICE
 
 
 def test_diagnose_endpoint_returns_markdown_comment_with_log_block() -> None:
@@ -42,9 +45,34 @@ def test_diagnose_endpoint_returns_markdown_comment_with_log_block() -> None:
     assert "### Root cause summary" in body["pr_comment"]
     assert "### Proposed fix" in body["pr_comment"]
     assert "```log" in body["pr_comment"]
+    assert NOVA_SRE_COMMENT_MARKER in body["pr_comment"]
     assert "ERROR database connection failed" in body["pr_comment"]
     assert body["github_comment_posted"] is False
     assert body["github_comment_url"] is None
+    assert body["github_comment_action"] == "skipped"
+
+
+def test_diagnose_endpoint_requires_agent_token_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_AGENT_TOKEN", "agent-token")
+    client = TestClient(app)
+    payload = {
+        "run_id": "run-token",
+        "repo": "acme/nova",
+        "sha": "abc123",
+        "logs": "ERROR deployment failed",
+    }
+
+    missing = client.post("/diagnose", json=payload)
+    wrong = client.post("/diagnose", headers={"X-Nova-SRE-Agent-Token": "wrong"}, json=payload)
+    allowed = client.post(
+        "/diagnose",
+        headers={"X-Nova-SRE-Agent-Token": "agent-token"},
+        json=payload,
+    )
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert allowed.status_code == 200
 
 
 def test_diagnose_endpoint_uses_safe_fallback_for_empty_logs() -> None:
@@ -68,7 +96,36 @@ def test_diagnose_endpoint_uses_safe_fallback_for_empty_logs() -> None:
     assert "```log\nNo log excerpt was available for this diagnosis.\n```" in body["pr_comment"]
 
 
-def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata() -> None:
+def test_diagnose_endpoint_uses_runner_context_when_logs_are_empty() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-runner",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "job_name": "nova-sre-workflow-run-abc",
+            "namespace": "nova-sre",
+            "reason": "BackoffLimitExceeded",
+            "message": "Job failed after retry budget was exhausted.",
+            "logs": [],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "identified"
+    assert body["result"]["failure_classification"] == "runner_failure"
+    assert body["summary"] == "Runner reason: BackoffLimitExceeded"
+    assert "Kubernetes runner job failed" in body["root_cause"]
+    assert "Runner message: Job failed after retry budget was exhausted." in body["pr_comment"]
+    assert "Pod status, events, image pull state, and resource limits" in body["suggested_fix"]
+
+
+def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(github_comment_client, "token", None)
     client = TestClient(app)
 
     response = client.post(
@@ -124,13 +181,114 @@ def test_diagnose_endpoint_accepts_runner_request_and_returns_metadata() -> None
             "base": "main",
         },
         "observed_time": "2026-06-27T12:34:56Z",
-        "github_owner": None,
-        "github_repo": None,
+        "github_owner": "acme",
+        "github_repo": "widgets",
         "github_pr_number": 42,
     }
     assert body["result"]["links"] == [
-        {"label": "pull_request", "url": "https://github.com/acme/widgets/pull/42"}
+        {"label": "pull_request", "url": "https://github.com/acme/widgets/pull/42"},
+        {"label": "github_pull_request", "url": "https://github.com/acme/widgets/pull/42"},
     ]
+    assert body["github_owner"] == "acme"
+    assert body["github_repo"] == "widgets"
+    assert body["github_pr_number"] == 42
+    assert body["github_comment_error"] == (
+        "GITHUB_TOKEN is not set; skipped GitHub PR comment posting."
+    )
+
+
+def test_diagnose_endpoint_prioritizes_go_test_failure_over_runner_context() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-real-unhealthy-pr",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "job_name": "nova-sre-real-unhealthy-pr-17",
+            "namespace": "nova-sre",
+            "reason": "BackoffLimitExceeded",
+            "message": "Job failed after retry budget was exhausted.",
+            "logs": [
+                {
+                    "pod": "runner-pod",
+                    "container": "runner",
+                    "logs": "\n".join(
+                        [
+                            "go: downloading github.com/pkg/errors v0.9.1",
+                            "=== RUN   TestRealUnhealthyPRSignalForNovaSRE",
+                            "--- FAIL: TestRealUnhealthyPRSignalForNovaSRE (0.00s)",
+                            "    real_unhealthy_test.go:17: intentional real unhealthy PR signal for Nova-SRE",
+                            "FAIL\tgithub.com/acme/widgets/server-go/cmd/server\t0.017s",
+                        ]
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "identified"
+    assert body["result"]["failure_classification"] == "test_failure"
+    assert "TestRealUnhealthyPRSignalForNovaSRE" in body["summary"]
+    assert "BackoffLimitExceeded" not in body["summary"]
+    assert "github.com/pkg/errors" not in body["summary"]
+    assert "intentional real unhealthy PR signal for Nova-SRE" in body["pr_comment"]
+    assert "go: downloading github.com/pkg/errors" not in body["pr_comment"]
+    assert "Kubernetes runner job failed" not in body["root_cause"]
+
+
+def test_diagnose_endpoint_posts_comment_from_runner_repository_metadata(monkeypatch) -> None:
+    async def post_comment(
+        *,
+        owner: str,
+        repo: str,
+        pr_number: int,
+        body: str,
+        mode: GitHubCommentMode = "upsert",
+    ):
+        assert owner == "acme"
+        assert repo == "widgets"
+        assert pr_number == 42
+        assert "runner crashed" in body
+        assert mode == "upsert"
+        return type(
+            "GitHubResult",
+            (),
+            {
+                "posted": True,
+                "url": "https://github.com/acme/widgets/pull/42#comment",
+                "error": None,
+                "action": "created",
+            },
+        )()
+
+    monkeypatch.setattr(github_comment_client, "post_comment", post_comment)
+    client = TestClient(app)
+
+    response = client.post(
+        "/diagnose",
+        json={
+            "delivery_id": "delivery-post",
+            "event": "workflow_run",
+            "repository": "acme/widgets",
+            "sha": "abcdef",
+            "pull_request": {
+                "number": 42,
+                "url": "https://github.com/acme/widgets/pull/42",
+            },
+            "logs": "ERROR runner crashed",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["github_comment_posted"] is True
+    assert body["github_comment_url"] == "https://github.com/acme/widgets/pull/42#comment"
+    assert body["github_comment_action"] == "created"
 
 
 def test_diagnose_endpoint_neutralizes_nested_fences_in_logs() -> None:
@@ -152,19 +310,43 @@ def test_diagnose_endpoint_neutralizes_nested_fences_in_logs() -> None:
     assert "``` inside logs" not in body["pr_comment"]
 
 
-def test_validate_pr_comment_appends_safe_fallback_when_block_is_missing() -> None:
-    result = validate_pr_comment(
-        DiagnosisState(
-            run_id="run-789",
-            repo="acme/nova",
-            sha="fed789",
-            diagnosis="precomputed",
-            pr_comment="A markdown comment without a fenced block.",
-        )
+def test_diagnosis_request_truncates_large_string_logs(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_MAX_LOG_CHARS", "120")
+    request = DiagnosisRequest(
+        run_id="run-large",
+        repo="acme/nova",
+        sha="abc123",
+        logs=f"start-{'a' * 120}-ERROR final failure",
     )
 
-    assert "A markdown comment without a fenced block." in result["pr_comment"]
-    assert "```log\nNo log excerpt was available for this diagnosis.\n```" in result["pr_comment"]
+    logs = request.to_state_input()["logs"]
+
+    assert len(logs) <= 120
+    assert TRUNCATED_LOG_NOTICE in logs
+    assert logs.startswith("start-")
+    assert logs.endswith("ERROR final failure")
+
+
+def test_diagnosis_request_truncates_large_structured_logs(monkeypatch) -> None:
+    monkeypatch.setenv("NOVA_SRE_MAX_LOG_CHARS", "120")
+    request = DiagnosisRequest(
+        run_id="run-large-structured",
+        repo="acme/nova",
+        sha="abc123",
+        logs=[
+            {
+                "pod": "pod-a",
+                "container": "runner",
+                "logs": "\n".join([f"line {index}" for index in range(40)]),
+            }
+        ],
+    )
+
+    logs = request.to_state_input()["logs"]
+
+    assert len(logs) <= 120
+    assert TRUNCATED_LOG_NOTICE in logs
+    assert "[pod-a/runner]" in logs
 
 
 def test_classify_failure_detects_dependency_failures() -> None:
@@ -257,6 +439,7 @@ def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> Non
         repo: str,
         pr_number: int,
         body: str,
+        mode: GitHubCommentMode = "upsert",
     ):
         client = GitHubPullRequestCommentClient(
             token="test-token",
@@ -267,6 +450,7 @@ def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> Non
             repo=repo,
             pr_number=pr_number,
             body=body,
+            mode=mode,
             transport=transport,
         )
 
@@ -292,6 +476,7 @@ def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> Non
     assert body["github_comment_posted"] is True
     assert body["github_comment_url"] == "https://github.com/acme/nova/pull/42#comment"
     assert body["github_comment_error"] is None
+    assert body["github_comment_action"] == "created"
     assert body["github_owner"] == "acme"
     assert body["github_repo"] == "nova"
     assert body["github_pr_number"] == 42
@@ -300,11 +485,14 @@ def test_diagnose_endpoint_posts_github_comment_when_enabled(monkeypatch) -> Non
         {"label": "github_pull_request", "url": "https://github.com/acme/nova/pull/42"},
         {"label": "github_comment", "url": "https://github.com/acme/nova/pull/42#comment"},
     ]
-    assert len(requests) == 1
-    assert str(requests[0].url) == "https://api.github.test/repos/acme/nova/issues/42/comments"
-    assert requests[0].headers["authorization"] == "Bearer test-token"
-    assert requests[0].read()
-    assert "deploy failed" in requests[0].content.decode()
+    assert len(requests) == 2
+    assert requests[0].method == "GET"
+    assert str(requests[0].url) == "https://api.github.test/repos/acme/nova/issues/42/comments?per_page=100"
+    assert requests[1].method == "POST"
+    assert str(requests[1].url) == "https://api.github.test/repos/acme/nova/issues/42/comments"
+    assert requests[1].headers["authorization"] == "Bearer test-token"
+    assert requests[1].read()
+    assert "deploy failed" in requests[1].content.decode()
 
 
 def test_diagnose_endpoint_posts_github_comment_with_metadata_and_token(monkeypatch) -> None:
@@ -314,11 +502,13 @@ def test_diagnose_endpoint_posts_github_comment_with_metadata_and_token(monkeypa
         repo: str,
         pr_number: int,
         body: str,
+        mode: GitHubCommentMode = "upsert",
     ):
         assert owner == "acme"
         assert repo == "nova"
         assert pr_number == 42
         assert "## Nova-SRE diagnosis" in body
+        assert mode == "upsert"
         return type(
             "GitHubResult",
             (),
@@ -326,6 +516,7 @@ def test_diagnose_endpoint_posts_github_comment_with_metadata_and_token(monkeypa
                 "posted": True,
                 "url": "https://github.com/acme/nova/pull/42#comment",
                 "error": None,
+                "action": "updated",
             },
         )()
 
@@ -350,6 +541,7 @@ def test_diagnose_endpoint_posts_github_comment_with_metadata_and_token(monkeypa
     assert body["github_comment_posted"] is True
     assert body["github_comment_url"] == "https://github.com/acme/nova/pull/42#comment"
     assert body["github_comment_error"] is None
+    assert body["github_comment_action"] == "updated"
 
 
 def test_diagnose_endpoint_dry_runs_github_comment_without_token(monkeypatch) -> None:
@@ -377,6 +569,7 @@ def test_diagnose_endpoint_dry_runs_github_comment_without_token(monkeypatch) ->
     assert body["github_comment_error"] == (
         "GITHUB_TOKEN is not set; skipped GitHub PR comment posting."
     )
+    assert body["github_comment_action"] == "skipped"
 
 
 def test_diagnose_endpoint_dry_runs_github_comment_without_metadata() -> None:
@@ -400,6 +593,7 @@ def test_diagnose_endpoint_dry_runs_github_comment_without_metadata() -> None:
     assert body["github_comment_error"] == (
         "GitHub PR comment posting requires github_owner, github_repo, and github_pr_number."
     )
+    assert body["github_comment_action"] == "skipped"
 
 
 def test_diagnose_endpoint_keeps_api_failure_nonfatal(monkeypatch) -> None:
@@ -409,6 +603,7 @@ def test_diagnose_endpoint_keeps_api_failure_nonfatal(monkeypatch) -> None:
         repo: str,
         pr_number: int,
         body: str,
+        mode: GitHubCommentMode = "upsert",
     ):
         return type(
             "GitHubResult",
@@ -417,6 +612,7 @@ def test_diagnose_endpoint_keeps_api_failure_nonfatal(monkeypatch) -> None:
                 "posted": False,
                 "url": None,
                 "error": "GitHub PR comment posting failed with HTTP 500.",
+                "action": "failed",
             },
         )()
 
@@ -441,6 +637,7 @@ def test_diagnose_endpoint_keeps_api_failure_nonfatal(monkeypatch) -> None:
     assert body["github_comment_posted"] is False
     assert body["github_comment_url"] is None
     assert body["github_comment_error"] == "GitHub PR comment posting failed with HTTP 500."
+    assert body["github_comment_action"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -480,7 +677,152 @@ async def test_github_comment_client_handles_api_failure() -> None:
 
     assert result.posted is False
     assert result.url is None
-    assert result.error == "GitHub PR comment posting failed with HTTP 500."
+    assert result.action == "failed"
+    assert result.error == "GitHub PR comment lookup failed with HTTP 500: server error."
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_updates_existing_marked_comment() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 100,
+                        "body": "unrelated comment",
+                        "html_url": "https://github.com/acme/nova/pull/42#issuecomment-100",
+                    },
+                    {
+                        "id": 101,
+                        "body": f"old diagnosis\n{NOVA_SRE_COMMENT_MARKER}",
+                        "html_url": "https://github.com/acme/nova/pull/42#issuecomment-101",
+                    },
+                ],
+            )
+        return httpx.Response(
+            200,
+            json={"html_url": "https://github.com/acme/nova/pull/42#issuecomment-101"},
+        )
+
+    client = GitHubPullRequestCommentClient(
+        token="test-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body=f"new diagnosis\n{NOVA_SRE_COMMENT_MARKER}",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is True
+    assert result.action == "updated"
+    assert result.url == "https://github.com/acme/nova/pull/42#issuecomment-101"
+    assert [request.method for request in requests] == ["GET", "PATCH"]
+    assert str(requests[1].url) == "https://api.github.test/repos/acme/nova/issues/comments/101"
+    assert "new diagnosis" in requests[1].content.decode()
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_create_mode_skips_lookup() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            201,
+            json={"html_url": "https://github.com/acme/nova/pull/42#issuecomment-102"},
+        )
+
+    client = GitHubPullRequestCommentClient(
+        token="test-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body=f"fresh diagnosis\n{NOVA_SRE_COMMENT_MARKER}",
+        mode="create",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is True
+    assert result.action == "created"
+    assert [request.method for request in requests] == ["POST"]
+    assert str(requests[0].url) == "https://api.github.test/repos/acme/nova/issues/42/comments"
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_reports_permission_failures_without_token_leak() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "message": "Resource not accessible by integration",
+                "errors": [
+                    {
+                        "field": "body",
+                        "code": "missing",
+                        "message": "cannot create issue comment",
+                    }
+                ],
+            },
+        )
+
+    client = GitHubPullRequestCommentClient(
+        token="super-secret-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body="comment body",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is False
+    assert result.error is not None
+    assert "HTTP 403" in result.error
+    assert "check GITHUB_TOKEN permissions" in result.error
+    assert "Resource not accessible by integration" in result.error
+    assert "cannot create issue comment" in result.error
+    assert "super-secret-token" not in result.error
+    assert result.action == "failed"
+
+
+@pytest.mark.asyncio
+async def test_github_comment_client_caps_error_detail() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="x" * 500)
+
+    client = GitHubPullRequestCommentClient(
+        token="test-token",
+        base_url="https://api.github.test",
+    )
+
+    result = await client.post_comment(
+        owner="acme",
+        repo="nova",
+        pr_number=42,
+        body="comment body",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.posted is False
+    assert result.error is not None
+    assert len(result.error) < 320
+    assert result.error.endswith("....")
+    assert result.action == "failed"
 
 
 @pytest.mark.asyncio
@@ -503,4 +845,5 @@ async def test_github_comment_client_handles_transport_failure() -> None:
 
     assert result.posted is False
     assert result.url is None
-    assert result.error == "GitHub PR comment posting failed: network unavailable"
+    assert result.action == "failed"
+    assert result.error == "GitHub PR comment lookup failed: network unavailable"

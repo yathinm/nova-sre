@@ -5,11 +5,11 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +26,7 @@ const (
 	githubDeliveryHeader  = "X-GitHub-Delivery"
 	githubEventHeader     = "X-GitHub-Event"
 	githubSignatureHeader = "X-Hub-Signature-256"
+	apiTokenHeader        = "X-Nova-SRE-API-Token"
 	maxWebhookBodyBytes   = 1 << 20
 )
 
@@ -43,23 +44,46 @@ type Server struct {
 	enqueueEvent  githubEventEnqueuer
 	activity      *activityStore
 	jobLister     kubernetesJobLister
+	apiToken      string
+	apiOrigins    []string
+	runtimeConfig runtimeConfig
+}
+
+type runtimeConfig struct {
+	ActivityLimit        int    `json:"activity_limit"`
+	ActivityStoreEnabled bool   `json:"activity_store_enabled"`
+	DeliveryCacheTTL     string `json:"delivery_cache_ttl"`
+	APIAuthEnabled       bool   `json:"api_auth_enabled"`
+	AgentAuthEnabled     bool   `json:"agent_auth_enabled"`
+	APICORSRestricted    bool   `json:"api_cors_restricted"`
+	RunnerNamespace      string `json:"runner_namespace,omitempty"`
+	RunnerImage          string `json:"runner_image,omitempty"`
+	RunnerJobTTLSeconds  int32  `json:"runner_job_ttl_seconds,omitempty"`
+	GitHubCommentMode    string `json:"github_comment_mode"`
 }
 
 func NewServer(webhookSecret string) *Server {
 	return NewServerWithEnqueuer(webhookSecret, enqueueGitHubEvent)
 }
 
-func NewServerWithRunner(webhookSecret string, eventRunner githubEventRunner) *Server {
-	return NewServerWithEnqueuer(webhookSecret, enqueueGitHubEventWithRunner(eventRunner))
+func NewServerWithRunnerAndActivity(webhookSecret string, eventRunner githubEventRunner, activity *activityStore) *Server {
+	return NewServerWithEnqueuerAndActivity(webhookSecret, enqueueGitHubEventWithRunner(eventRunner), activity)
 }
 
 func NewServerWithEnqueuer(webhookSecret string, enqueueEvent githubEventEnqueuer) *Server {
+	return NewServerWithEnqueuerAndActivity(webhookSecret, enqueueEvent, newActivityStore(defaultActivityLimit))
+}
+
+func NewServerWithEnqueuerAndActivity(webhookSecret string, enqueueEvent githubEventEnqueuer, activity *activityStore) *Server {
+	if activity == nil {
+		activity = newActivityStore(defaultActivityLimit)
+	}
 	s := &Server{
 		mux:           http.NewServeMux(),
 		webhookSecret: webhookSecret,
 		deliveries:    newDeliveryCache(15 * time.Minute),
 		enqueueEvent:  enqueueEvent,
-		activity:      newActivityStore(50),
+		activity:      activity,
 	}
 
 	s.routes()
@@ -70,54 +94,76 @@ func (s *Server) SetKubernetesJobLister(jobLister kubernetesJobLister) {
 	s.jobLister = jobLister
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	setCORSHeaders(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
+func (s *Server) SetAPIToken(token string) {
+	s.apiToken = strings.TrimSpace(token)
+	s.runtimeConfig.APIAuthEnabled = s.apiToken != ""
+}
+
+func (s *Server) SetAPIAllowedOrigins(raw string) {
+	s.apiOrigins = parseAllowedOrigins(raw)
+	s.runtimeConfig.APICORSRestricted = len(s.apiOrigins) > 0 && !containsOrigin(s.apiOrigins, "*")
+}
+
+func (s *Server) SetDeliveryCacheTTL(ttl time.Duration) {
+	if ttl <= 0 || s.deliveries == nil {
 		return
 	}
+	s.deliveries.SetTTL(ttl)
+	s.runtimeConfig.DeliveryCacheTTL = ttl.String()
+}
+
+func (s *Server) SetRuntimeConfig(config runtimeConfig) {
+	config.APIAuthEnabled = s.runtimeConfig.APIAuthEnabled
+	if strings.TrimSpace(config.DeliveryCacheTTL) == "" && s.deliveries != nil {
+		config.DeliveryCacheTTL = s.deliveries.TTL().String()
+	}
+	s.runtimeConfig = config
+	s.runtimeConfig.APIAuthEnabled = s.apiToken != ""
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.isBrowserReadablePath(r.URL.Path) {
+		s.setAPIHeaders(w, r)
+		if r.Method == http.MethodOptions && strings.HasPrefix(r.URL.Path, "/api/") {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		if !s.validAPIToken(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) isBrowserReadablePath(path string) bool {
+	return strings.HasPrefix(path, "/api/") || path == "/healthz" || path == "/metrics"
 }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.Handle("/metrics", promhttp.Handler())
-	s.mux.HandleFunc("/api/events", s.handleEvents)
-	s.mux.HandleFunc("/api/jobs", s.handleJobs)
+	s.mux.HandleFunc("/api/config", s.handleAPIConfig)
+	s.mux.HandleFunc("/api/summary", s.handleAPISummary)
+	s.mux.HandleFunc("/api/events", s.handleAPIEvents)
+	s.mux.HandleFunc("/api/jobs", s.handleAPIJobs)
 	s.mux.HandleFunc("/webhook", s.handleWebhook)
+}
+
+func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.runtimeConfig)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
-}
-
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	events, err := s.activityEvents(r.Context())
-	if err != nil {
-		http.Error(w, "failed to list activity events", http.StatusBadGateway)
-		return
-	}
-	writeJSON(w, map[string]any{"events": events})
-}
-
-func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	jobs, err := s.activityJobs(r.Context())
-	if err != nil {
-		http.Error(w, "failed to list activity jobs", http.StatusBadGateway)
-		return
-	}
-	writeJSON(w, map[string]any{"jobs": jobs})
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -154,43 +200,75 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eventPayload := githubEvent{
+		DeliveryID: deliveryID,
+		Event:      event,
+		Body:       body,
+		ReceivedAt: time.Now().UTC(),
+	}
+	s.activity.recordReceived(eventPayload)
+
 	if alreadySeen := s.deliveries.Add(deliveryID, time.Now()); alreadySeen {
+		s.activity.recordDuplicate(eventPayload)
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 
-	receivedAt := time.Now().UTC()
-	repository := repositoryFromGitHubPayload(body)
-	s.activity.RecordEvent(activityEvent{
-		DeliveryID: deliveryID,
-		Event:      event,
-		Repository: repository,
-		ReceivedAt: receivedAt,
-		Status:     "accepted",
-	})
-
-	if err := s.enqueueEvent(r.Context(), githubEvent{
-		DeliveryID: deliveryID,
-		Event:      event,
-		Body:       body,
-		ReceivedAt: receivedAt,
-	}); err != nil {
-		s.activity.UpdateEventStatus(deliveryID, "failed")
+	if err := s.enqueueEvent(r.Context(), eventPayload); err != nil {
 		log.Printf("failed to enqueue GitHub event delivery=%s event=%s: %v", deliveryID, event, err)
+		s.activity.recordError(eventPayload, err.Error())
 		http.Error(w, "failed to enqueue GitHub event", http.StatusInternalServerError)
 		return
 	}
 
-	s.activity.RecordJob(activityJob{
-		JobName:      "delivery-" + shortDeliveryID(deliveryID),
-		Namespace:    "nova-sre",
-		Event:        event,
-		Repository:   repository,
-		DeliveryID:   deliveryID,
-		ObservedTime: receivedAt,
-		Status:       "queued",
-	})
+	s.activity.recordAccepted(eventPayload)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleAPISummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, summarizeActivityRecords(s.activityEvents(r.Context(), defaultActivityLimit)))
+}
+
+func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := s.apiListLimit(r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events": s.activityEvents(r.Context(), limit),
+	})
+}
+
+func (s *Server) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := s.apiListLimit(r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"jobs": s.activityJobs(r.Context(), limit),
+	})
+}
+
+func (s *Server) apiListLimit(r *http.Request) int {
+	limit := defaultActivityLimit
+	if s.activity != nil && s.activity.limit > 0 {
+		limit = s.activity.limit
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed < limit {
+			limit = parsed
+		}
+	}
+	return limit
 }
 
 func validGitHubSignature(signatureHeader string, body []byte, secret string) bool {
@@ -213,7 +291,7 @@ func validGitHubSignature(signatureHeader string, body []byte, secret string) bo
 type githubEvent struct {
 	DeliveryID string
 	Event      string
-	Body       json.RawMessage
+	Body       []byte
 	ReceivedAt time.Time
 }
 
@@ -224,7 +302,7 @@ type githubEventRunner interface {
 }
 
 func enqueueGitHubEvent(_ context.Context, event githubEvent) error {
-	// TODO: Create a Kubernetes Job for supported GitHub webhook events.
+	// Fallback for tests and local runs without an injected Kubernetes runner.
 	log.Printf("accepted GitHub event delivery=%s event=%s body_bytes=%d", event.DeliveryID, event.Event, len(event.Body))
 	return nil
 }
@@ -240,144 +318,167 @@ func enqueueGitHubEventWithRunner(eventRunner githubEventRunner) githubEventEnqu
 	}
 }
 
-func setCORSHeaders(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+func (s *Server) setAPIHeaders(w http.ResponseWriter, r *http.Request) {
+	if origin := s.allowedAPIOrigin(r.Header.Get("Origin")); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		if origin != "*" {
+			w.Header().Add("Vary", "Origin")
+		}
+	}
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-GitHub-Delivery, X-GitHub-Event, X-Hub-Signature-256, "+apiTokenHeader)
+	w.Header().Set("Cache-Control", "no-store")
 }
 
-func writeJSON(w http.ResponseWriter, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+func (s *Server) allowedAPIOrigin(requestOrigin string) string {
+	origins := s.apiOrigins
+	if len(origins) == 0 {
+		return "*"
 	}
-}
-
-func repositoryFromGitHubPayload(body []byte) string {
-	var payload struct {
-		Repository struct {
-			FullName string `json:"full_name"`
-		} `json:"repository"`
-		PullRequest struct {
-			Head struct {
-				Repo struct {
-					FullName string `json:"full_name"`
-				} `json:"repo"`
-			} `json:"head"`
-		} `json:"pull_request"`
-		WorkflowRun struct {
-			Repository struct {
-				FullName string `json:"full_name"`
-			} `json:"repository"`
-		} `json:"workflow_run"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
-	}
-	return firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
+	for _, origin := range origins {
+		if origin == "*" {
+			return "*"
+		}
+		if requestOrigin != "" && origin == requestOrigin {
+			return requestOrigin
 		}
 	}
 	return ""
 }
 
-func shortDeliveryID(deliveryID string) string {
-	deliveryID = strings.TrimSpace(deliveryID)
-	if len(deliveryID) <= 8 {
-		return deliveryID
+func parseAllowedOrigins(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
 	}
-	return deliveryID[:8]
+	values := strings.Split(raw, ",")
+	origins := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		origin := strings.TrimSpace(value)
+		if origin == "" {
+			continue
+		}
+		if _, ok := seen[origin]; ok {
+			continue
+		}
+		seen[origin] = struct{}{}
+		origins = append(origins, origin)
+	}
+	return origins
 }
 
-type activityEvent struct {
-	DeliveryID string    `json:"delivery_id"`
-	Event      string    `json:"event"`
-	Repository string    `json:"repository,omitempty"`
-	SHA        string    `json:"sha,omitempty"`
-	ReceivedAt time.Time `json:"received_at"`
-	Status     string    `json:"status"`
+func containsOrigin(origins []string, want string) bool {
+	for _, origin := range origins {
+		if origin == want {
+			return true
+		}
+	}
+	return false
 }
 
-type activityJob struct {
-	JobName      string     `json:"job_name"`
-	Namespace    string     `json:"namespace"`
-	Event        string     `json:"event"`
-	Repository   string     `json:"repository,omitempty"`
-	SHA          string     `json:"sha,omitempty"`
-	DeliveryID   string     `json:"delivery_id"`
-	ObservedTime time.Time  `json:"observed_time"`
-	Status       string     `json:"status"`
-	Reason       string     `json:"reason,omitempty"`
-	Message      string     `json:"message,omitempty"`
-	Active       int32      `json:"active"`
-	Succeeded    int32      `json:"succeeded"`
-	Failed       int32      `json:"failed"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+func (s *Server) validAPIToken(r *http.Request) bool {
+	if strings.TrimSpace(s.apiToken) == "" {
+		return true
+	}
+	candidate := strings.TrimSpace(r.Header.Get(apiTokenHeader))
+	if candidate == "" {
+		auth := strings.TrimSpace(r.Header.Get("Authorization"))
+		if scheme, value, ok := strings.Cut(auth, " "); ok && strings.EqualFold(scheme, "Bearer") {
+			candidate = strings.TrimSpace(value)
+		}
+	}
+	if candidate == "" {
+		return false
+	}
+	return secureCompareToken(candidate, s.apiToken)
+}
+
+func secureCompareToken(candidate string, expected string) bool {
+	if candidate == "" || expected == "" {
+		return false
+	}
+	candidateHash := sha256.Sum256([]byte(candidate))
+	expectedHash := sha256.Sum256([]byte(expected))
+	return hmac.Equal(candidateHash[:], expectedHash[:])
 }
 
 type kubernetesJobLister interface {
 	List(ctx context.Context, opts metav1.ListOptions) (*batchv1.JobList, error)
 }
 
-func (s *Server) activityEvents(ctx context.Context) ([]activityEvent, error) {
-	events := s.activity.Events()
+func (s *Server) activityEvents(ctx context.Context, limit int) []activityRecord {
+	events := s.activity.recent(limit)
 	if s.jobLister == nil {
-		return events, nil
+		return events
 	}
 
 	jobs, err := s.listRunnerJobs(ctx)
 	if err != nil {
-		return nil, err
+		log.Printf("failed to list Kubernetes runner jobs for activity events: %v", err)
+		return events
 	}
 
-	byDelivery := make(map[string]activityEvent, len(events)+len(jobs.Items))
+	byDelivery := make(map[string]activityRecord, len(events)+len(jobs.Items))
 	for _, event := range events {
 		byDelivery[event.DeliveryID] = event
 	}
 	for _, job := range jobs.Items {
-		event, ok := activityEventFromJob(&job)
+		record, ok := activityRecordFromJob(&job)
 		if !ok {
 			continue
 		}
-		if _, exists := byDelivery[event.DeliveryID]; !exists {
-			byDelivery[event.DeliveryID] = event
+		if existing, exists := byDelivery[record.DeliveryID]; !exists || record.UpdatedAt.After(existing.UpdatedAt) {
+			byDelivery[record.DeliveryID] = mergeActivityRecord(existing, record)
 		}
 	}
 
-	merged := make([]activityEvent, 0, len(byDelivery))
+	merged := make([]activityRecord, 0, len(byDelivery))
 	for _, event := range byDelivery {
 		merged = append(merged, event)
 	}
 	sort.SliceStable(merged, func(i, j int) bool {
-		return merged[i].ReceivedAt.After(merged[j].ReceivedAt)
+		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
 	})
-	return limitActivity(merged, s.activity.limit), nil
+	return limitActivity(merged, limit)
 }
 
-func (s *Server) activityJobs(ctx context.Context) ([]activityJob, error) {
+func (s *Server) activityJobs(ctx context.Context, limit int) []activityRecord {
+	records := s.activity.recentJobs(limit)
 	if s.jobLister == nil {
-		return s.activity.Jobs(), nil
+		return records
 	}
 
 	jobs, err := s.listRunnerJobs(ctx)
 	if err != nil {
-		return nil, err
+		log.Printf("failed to list Kubernetes runner jobs for activity jobs: %v", err)
+		return records
 	}
 
-	activity := make([]activityJob, 0, len(jobs.Items))
-	for _, job := range jobs.Items {
-		activity = append(activity, activityJobFromJob(&job))
+	byDelivery := make(map[string]activityRecord, len(records)+len(jobs.Items))
+	for _, record := range records {
+		byDelivery[record.DeliveryID] = record
 	}
-	sort.SliceStable(activity, func(i, j int) bool {
-		return activity[i].ObservedTime.After(activity[j].ObservedTime)
+	for _, job := range jobs.Items {
+		record, ok := activityRecordFromJob(&job)
+		if !ok {
+			continue
+		}
+		if existing, exists := byDelivery[record.DeliveryID]; !exists || record.UpdatedAt.After(existing.UpdatedAt) {
+			byDelivery[record.DeliveryID] = mergeActivityRecord(existing, record)
+		}
+	}
+
+	merged := make([]activityRecord, 0, len(byDelivery))
+	for _, record := range byDelivery {
+		if strings.TrimSpace(record.JobName) != "" {
+			merged = append(merged, record)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].UpdatedAt.After(merged[j].UpdatedAt)
 	})
-	return limitActivity(activity, s.activity.limit), nil
+	return limitActivity(merged, limit)
 }
 
 func (s *Server) listRunnerJobs(ctx context.Context) (*batchv1.JobList, error) {
@@ -385,45 +486,54 @@ func (s *Server) listRunnerJobs(ctx context.Context) (*batchv1.JobList, error) {
 	return s.jobLister.List(ctx, metav1.ListOptions{LabelSelector: selector})
 }
 
-func activityEventFromJob(job *batchv1.Job) (activityEvent, bool) {
+func activityRecordFromJob(job *batchv1.Job) (activityRecord, bool) {
 	if job == nil || strings.TrimSpace(job.Annotations["nova-sre.io/delivery-id"]) == "" {
-		return activityEvent{}, false
+		return activityRecord{}, false
 	}
 
+	status, reason, message := jobStatus(job)
 	receivedAt := parseAnnotationTime(job.Annotations["nova-sre.io/received-at"])
 	if receivedAt.IsZero() {
 		receivedAt = job.CreationTimestamp.Time
 	}
-	return activityEvent{
+	updatedAt := jobObservedTime(job)
+	if updatedAt.IsZero() {
+		updatedAt = receivedAt
+	}
+	return activityRecord{
 		DeliveryID: job.Annotations["nova-sre.io/delivery-id"],
 		Event:      job.Annotations["nova-sre.io/event"],
 		Repository: job.Annotations["nova-sre.io/repository"],
 		SHA:        job.Annotations["nova-sre.io/commit-sha"],
+		Status:     status,
+		Namespace:  job.Namespace,
+		JobName:    job.Name,
+		Reason:     reason,
+		Message:    message,
 		ReceivedAt: receivedAt.UTC(),
-		Status:     "accepted",
+		UpdatedAt:  updatedAt.UTC(),
 	}, true
 }
 
-func activityJobFromJob(job *batchv1.Job) activityJob {
-	status, reason, message := jobStatus(job)
-	observedAt := jobObservedTime(job)
-	return activityJob{
-		JobName:      job.Name,
-		Namespace:    job.Namespace,
-		Event:        job.Annotations["nova-sre.io/event"],
-		Repository:   job.Annotations["nova-sre.io/repository"],
-		SHA:          job.Annotations["nova-sre.io/commit-sha"],
-		DeliveryID:   job.Annotations["nova-sre.io/delivery-id"],
-		ObservedTime: observedAt.UTC(),
-		Status:       status,
-		Reason:       reason,
-		Message:      message,
-		Active:       job.Status.Active,
-		Succeeded:    job.Status.Succeeded,
-		Failed:       job.Status.Failed,
-		StartedAt:    metav1TimePtr(job.Status.StartTime),
-		CompletedAt:  metav1TimePtr(job.Status.CompletionTime),
+func mergeActivityRecord(memory activityRecord, durable activityRecord) activityRecord {
+	if strings.TrimSpace(memory.DeliveryID) == "" {
+		return durable
 	}
+	memory.Event = firstNonEmpty(durable.Event, memory.Event)
+	memory.Repository = firstNonEmpty(durable.Repository, memory.Repository)
+	memory.SHA = firstNonEmpty(durable.SHA, memory.SHA)
+	memory.Status = firstNonEmpty(durable.Status, memory.Status)
+	memory.Namespace = firstNonEmpty(durable.Namespace, memory.Namespace)
+	memory.JobName = firstNonEmpty(durable.JobName, memory.JobName)
+	memory.Reason = firstNonEmpty(durable.Reason, memory.Reason)
+	memory.Message = firstNonEmpty(durable.Message, memory.Message)
+	if memory.ReceivedAt.IsZero() || (!durable.ReceivedAt.IsZero() && durable.ReceivedAt.Before(memory.ReceivedAt)) {
+		memory.ReceivedAt = durable.ReceivedAt
+	}
+	if durable.UpdatedAt.After(memory.UpdatedAt) {
+		memory.UpdatedAt = durable.UpdatedAt
+	}
+	return memory
 }
 
 func jobStatus(job *batchv1.Job) (string, string, string) {
@@ -470,73 +580,11 @@ func parseAnnotationTime(value string) time.Time {
 	return parsed
 }
 
-func metav1TimePtr(value *metav1.Time) *time.Time {
-	if value == nil || value.IsZero() {
-		return nil
-	}
-	utc := value.Time.UTC()
-	return &utc
-}
-
 func limitActivity[T any](items []T, limit int) []T {
 	if limit > 0 && len(items) > limit {
 		return items[:limit]
 	}
 	return items
-}
-
-type activityStore struct {
-	limit  int
-	mu     sync.Mutex
-	events []activityEvent
-	jobs   []activityJob
-}
-
-func newActivityStore(limit int) *activityStore {
-	return &activityStore{limit: limit}
-}
-
-func (s *activityStore) RecordEvent(event activityEvent) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.events = prependLimited(event, s.events, s.limit)
-}
-
-func (s *activityStore) UpdateEventStatus(deliveryID string, status string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for i := range s.events {
-		if s.events[i].DeliveryID == deliveryID {
-			s.events[i].Status = status
-			return
-		}
-	}
-}
-
-func (s *activityStore) RecordJob(job activityJob) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.jobs = prependLimited(job, s.jobs, s.limit)
-}
-
-func (s *activityStore) Events() []activityEvent {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]activityEvent(nil), s.events...)
-}
-
-func (s *activityStore) Jobs() []activityJob {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]activityJob(nil), s.jobs...)
-}
-
-func prependLimited[T any](item T, items []T, limit int) []T {
-	next := append([]T{item}, items...)
-	if limit > 0 && len(next) > limit {
-		return next[:limit]
-	}
-	return next
 }
 
 type deliveryCache struct {
@@ -550,6 +598,20 @@ func newDeliveryCache(ttl time.Duration) *deliveryCache {
 		ttl:  ttl,
 		seen: make(map[string]time.Time),
 	}
+}
+
+func (c *deliveryCache) SetTTL(ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ttl > 0 {
+		c.ttl = ttl
+	}
+}
+
+func (c *deliveryCache) TTL() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.ttl
 }
 
 func (c *deliveryCache) Add(deliveryID string, now time.Time) bool {

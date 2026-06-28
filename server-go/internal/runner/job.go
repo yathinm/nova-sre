@@ -19,6 +19,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	batchtypedv1 "k8s.io/client-go/kubernetes/typed/batch/v1"
@@ -33,6 +34,12 @@ const (
 	defaultPoll      = 2 * time.Second
 	defaultCallback  = 5 * time.Minute
 	defaultAgentWait = 10 * time.Second
+
+	defaultRunnerCPURequest    = "100m"
+	defaultRunnerMemoryRequest = "128Mi"
+	defaultRunnerCPULimit      = "500m"
+	defaultRunnerMemoryLimit   = "256Mi"
+	DefaultRunnerLogLimitBytes = int64(64 * 1024)
 )
 
 var dnsLabelPattern = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -45,14 +52,18 @@ type Event struct {
 }
 
 type JobConfig struct {
-	Namespace          string
-	Image              string
-	Repo               string
-	SHA                string
-	Command            []string
-	TTLSecondsFinished *int32
-	BackoffLimit       *int32
-	ServiceAccountName string
+	Namespace           string
+	Image               string
+	Repo                string
+	SHA                 string
+	Command             []string
+	CommandByEvent      map[string][]string
+	CommandByRepository map[string][]string
+	GitHubCommentMode   string
+	TTLSecondsFinished  *int32
+	BackoffLimit        *int32
+	ServiceAccountName  string
+	Resources           corev1.ResourceRequirements
 }
 
 type JobCreator interface {
@@ -68,7 +79,24 @@ type JobLogCollector interface {
 }
 
 type AgentClient interface {
-	Diagnose(ctx context.Context, request DiagnoseRequest) error
+	Diagnose(ctx context.Context, request DiagnoseRequest) (DiagnoseResponse, error)
+}
+
+type JobObserver interface {
+	ObserveJob(update JobStatusUpdate)
+}
+
+type JobStatusUpdate struct {
+	DeliveryID string
+	Event      string
+	Repository string
+	SHA        string
+	Status     string
+	Namespace  string
+	JobName    string
+	Reason     string
+	Message    string
+	ObservedAt time.Time
 }
 
 type JobResult struct {
@@ -93,18 +121,25 @@ type PullRequestMetadata struct {
 }
 
 type DiagnoseRequest struct {
-	DeliveryID   string              `json:"delivery_id"`
-	Event        string              `json:"event"`
-	Repository   string              `json:"repository,omitempty"`
-	SHA          string              `json:"sha,omitempty"`
-	JobName      string              `json:"job_name"`
-	Namespace    string              `json:"namespace"`
-	Reason       string              `json:"reason,omitempty"`
-	Message      string              `json:"message,omitempty"`
-	PullRequest  PullRequestMetadata `json:"pull_request,omitempty"`
-	Logs         []LogEntry          `json:"logs"`
-	WebhookBody  json.RawMessage     `json:"webhook_body,omitempty"`
-	ObservedTime time.Time           `json:"observed_time"`
+	DeliveryID        string              `json:"delivery_id"`
+	Event             string              `json:"event"`
+	Repository        string              `json:"repository,omitempty"`
+	SHA               string              `json:"sha,omitempty"`
+	JobName           string              `json:"job_name"`
+	Namespace         string              `json:"namespace"`
+	Reason            string              `json:"reason,omitempty"`
+	Message           string              `json:"message,omitempty"`
+	PullRequest       PullRequestMetadata `json:"pull_request,omitempty"`
+	Logs              []LogEntry          `json:"logs"`
+	ObservedTime      time.Time           `json:"observed_time"`
+	GitHubCommentMode string              `json:"github_comment_mode,omitempty"`
+}
+
+type DiagnoseResponse struct {
+	GitHubCommentPosted bool   `json:"github_comment_posted"`
+	GitHubCommentURL    string `json:"github_comment_url"`
+	GitHubCommentError  string `json:"github_comment_error"`
+	GitHubCommentAction string `json:"github_comment_action"`
 }
 
 type KubernetesJobCreator struct {
@@ -157,7 +192,8 @@ func (w KubernetesJobWatcher) WaitForCompletion(ctx context.Context, namespace s
 }
 
 type KubernetesJobLogCollector struct {
-	Pods coretypedv1.PodInterface
+	Pods          coretypedv1.PodInterface
+	LogLimitBytes int64
 }
 
 func (c KubernetesJobLogCollector) CollectJobLogs(ctx context.Context, namespace string, jobName string) ([]LogEntry, error) {
@@ -188,7 +224,7 @@ func (c KubernetesJobLogCollector) CollectJobLogs(ctx context.Context, namespace
 
 func (c KubernetesJobLogCollector) collectContainerLog(ctx context.Context, podName string, containerName string) LogEntry {
 	entry := LogEntry{Pod: podName, Container: containerName}
-	body, err := c.Pods.GetLogs(podName, &corev1.PodLogOptions{Container: containerName}).DoRaw(ctx)
+	body, err := c.Pods.GetLogs(podName, c.podLogOptions(containerName)).DoRaw(ctx)
 	if err != nil {
 		entry.Error = err.Error()
 		return entry
@@ -197,13 +233,24 @@ func (c KubernetesJobLogCollector) collectContainerLog(ctx context.Context, podN
 	return entry
 }
 
+func (c KubernetesJobLogCollector) podLogOptions(containerName string) *corev1.PodLogOptions {
+	options := &corev1.PodLogOptions{Container: containerName}
+	limit := c.LogLimitBytes
+	if limit <= 0 {
+		limit = DefaultRunnerLogLimitBytes
+	}
+	options.LimitBytes = &limit
+	return options
+}
+
 type HTTPAgentClient struct {
 	URL        string
 	HTTPClient *http.Client
 	Timeout    time.Duration
+	Token      string
 }
 
-func NewHTTPAgentClient(agentURL string, timeout time.Duration) (*HTTPAgentClient, error) {
+func NewHTTPAgentClient(agentURL string, timeout time.Duration, tokens ...string) (*HTTPAgentClient, error) {
 	agentURL = strings.TrimSpace(agentURL)
 	if agentURL == "" {
 		return nil, nil
@@ -223,20 +270,21 @@ func NewHTTPAgentClient(agentURL string, timeout time.Duration) (*HTTPAgentClien
 		URL:        parsed.String(),
 		HTTPClient: &http.Client{Timeout: timeout},
 		Timeout:    timeout,
+		Token:      firstString(tokens...),
 	}, nil
 }
 
-func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest) error {
+func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest) (DiagnoseResponse, error) {
 	if c == nil {
-		return nil
+		return DiagnoseResponse{}, nil
 	}
 	if strings.TrimSpace(c.URL) == "" {
-		return errors.New("agent URL is required")
+		return DiagnoseResponse{}, errors.New("agent URL is required")
 	}
 
 	body, err := json.Marshal(request)
 	if err != nil {
-		return fmt.Errorf("marshal diagnose request: %w", err)
+		return DiagnoseResponse{}, fmt.Errorf("marshal diagnose request: %w", err)
 	}
 
 	timeout := c.Timeout
@@ -248,9 +296,12 @@ func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create diagnose request: %w", err)
+		return DiagnoseResponse{}, fmt.Errorf("create diagnose request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token := strings.TrimSpace(c.Token); token != "" {
+		req.Header.Set("X-Nova-SRE-Agent-Token", token)
+	}
 
 	client := c.HTTPClient
 	if client == nil {
@@ -258,15 +309,37 @@ func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("send diagnose request: %w", err)
+		return DiagnoseResponse{}, fmt.Errorf("send diagnose request: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("diagnose request returned status %d", resp.StatusCode)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return DiagnoseResponse{}, fmt.Errorf("diagnose request returned status %d", resp.StatusCode)
 	}
-	return nil
+
+	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("read diagnose response: %w", err)
+	}
+	if len(bytes.TrimSpace(bodyBytes)) == 0 {
+		return DiagnoseResponse{}, nil
+	}
+
+	var result DiagnoseResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return DiagnoseResponse{}, fmt.Errorf("decode diagnose response: %w", err)
+	}
+	return result, nil
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 type JobRunner struct {
@@ -276,6 +349,7 @@ type JobRunner struct {
 	LogCollector    JobLogCollector
 	Agent           AgentClient
 	Metrics         PipelineMetrics
+	Observer        JobObserver
 	Logger          *log.Logger
 	CallbackTimeout time.Duration
 	Now             func() time.Time
@@ -304,6 +378,10 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 	if r.Creator == nil {
 		r.logf("prepared Kubernetes Job namespace=%s generate_name=%s delivery=%s event=%s",
 			job.Namespace, job.GenerateName, event.DeliveryID, event.Type)
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "prepared",
+			Namespace: job.Namespace,
+		})
 		r.metrics().JobFinished(PipelineJobMetrics{
 			Status:            "prepared",
 			Repo:              repo,
@@ -316,6 +394,11 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 
 	created, err := r.Creator.Create(ctx, job)
 	if err != nil {
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:  "error",
+			Reason:  "CreateFailed",
+			Message: err.Error(),
+		})
 		r.metrics().JobFinished(PipelineJobMetrics{
 			Status:            "failed",
 			Repo:              repo,
@@ -328,6 +411,11 @@ func (r JobRunner) EnqueueGitHubEvent(ctx context.Context, event Event) error {
 
 	r.logf("created Kubernetes Job namespace=%s name=%s delivery=%s event=%s",
 		created.Namespace, created.Name, event.DeliveryID, event.Type)
+	r.observeJob(event, metadata, JobStatusUpdate{
+		Status:    "created",
+		Namespace: created.Namespace,
+		JobName:   created.Name,
+	})
 	r.metrics().JobFinished(PipelineJobMetrics{
 		Status:            "created",
 		Repo:              repo,
@@ -358,6 +446,14 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 
 	result, err := r.Watcher.WaitForCompletion(ctx, job.Namespace, job.Name)
 	if err != nil {
+		metadata := githubPayloadMetadata(event.Body)
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "error",
+			Namespace: job.Namespace,
+			JobName:   job.Name,
+			Reason:    "WatchFailed",
+			Message:   err.Error(),
+		})
 		r.logf("failed to observe Kubernetes Job namespace=%s name=%s delivery=%s event=%s: %v",
 			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
 		return
@@ -365,10 +461,17 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 
 	metadata := githubPayloadMetadata(event.Body)
 	repo := firstNonEmpty(job.Annotations["nova-sre.io/repository"], metadata.Repo)
-	status := "success"
+	status := "succeeded"
 	if result.Failed {
 		status = "failed"
 	}
+	r.observeJob(event, metadata, JobStatusUpdate{
+		Status:    status,
+		Namespace: job.Namespace,
+		JobName:   job.Name,
+		Reason:    result.Reason,
+		Message:   result.Message,
+	})
 	r.metrics().JobFinished(PipelineJobMetrics{
 		Status:     status,
 		Repo:       repo,
@@ -390,25 +493,62 @@ func (r JobRunner) runFailureCallback(ctx context.Context, job *batchv1.Job, eve
 	}
 
 	request := DiagnoseRequest{
-		DeliveryID:   event.DeliveryID,
-		Event:        event.Type,
-		Repository:   metadata.Repo,
-		SHA:          metadata.SHA,
-		JobName:      job.Name,
-		Namespace:    job.Namespace,
-		Reason:       result.Reason,
-		Message:      result.Message,
-		PullRequest:  metadata.PullRequest,
-		Logs:         logs,
-		WebhookBody:  append(json.RawMessage(nil), event.Body...),
-		ObservedTime: r.now(),
+		DeliveryID:        event.DeliveryID,
+		Event:             event.Type,
+		Repository:        metadata.Repo,
+		SHA:               metadata.SHA,
+		JobName:           job.Name,
+		Namespace:         job.Namespace,
+		Reason:            result.Reason,
+		Message:           result.Message,
+		PullRequest:       metadata.PullRequest,
+		Logs:              logs,
+		ObservedTime:      r.now(),
+		GitHubCommentMode: r.Config.withDefaults(metadata).GitHubCommentMode,
 	}
-	if err := r.Agent.Diagnose(ctx, request); err != nil {
+	diagnosis, err := r.Agent.Diagnose(ctx, request)
+	if err != nil {
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "diagnosis_error",
+			Namespace: job.Namespace,
+			JobName:   job.Name,
+			Reason:    "DiagnosisRequestFailed",
+			Message:   err.Error(),
+		})
 		r.logf("failed to send diagnosis request namespace=%s name=%s delivery=%s event=%s: %v",
 			job.Namespace, job.Name, event.DeliveryID, event.Type, err)
 		return
 	}
 
+	if strings.TrimSpace(diagnosis.GitHubCommentError) != "" {
+		r.observeJob(event, metadata, JobStatusUpdate{
+			Status:    "diagnosis_comment_error",
+			Namespace: job.Namespace,
+			JobName:   job.Name,
+			Reason:    "GitHubCommentFailed",
+			Message:   diagnosis.GitHubCommentError,
+		})
+		r.logf("diagnosis completed with GitHub comment error namespace=%s name=%s delivery=%s event=%s action=%s: %s",
+			job.Namespace, job.Name, event.DeliveryID, event.Type, diagnosis.GitHubCommentAction, diagnosis.GitHubCommentError)
+		return
+	}
+
+	reason := result.Reason
+	message := result.Message
+	if strings.TrimSpace(diagnosis.GitHubCommentAction) != "" {
+		reason = firstString(diagnosis.GitHubCommentAction, reason)
+	}
+	if strings.TrimSpace(diagnosis.GitHubCommentURL) != "" {
+		message = firstString(diagnosis.GitHubCommentURL, message)
+	}
+
+	r.observeJob(event, metadata, JobStatusUpdate{
+		Status:    "diagnosed",
+		Namespace: job.Namespace,
+		JobName:   job.Name,
+		Reason:    reason,
+		Message:   message,
+	})
 	r.logf("sent diagnosis request namespace=%s name=%s delivery=%s event=%s logs=%d",
 		job.Namespace, job.Name, event.DeliveryID, event.Type, len(logs))
 }
@@ -433,19 +573,37 @@ func (r JobRunner) metrics() PipelineMetrics {
 	return noopPipelineMetrics{}
 }
 
+func (r JobRunner) observeJob(event Event, metadata payloadMetadata, update JobStatusUpdate) {
+	if r.Observer == nil {
+		return
+	}
+	update.DeliveryID = firstNonEmpty(update.DeliveryID, event.DeliveryID)
+	update.Event = firstNonEmpty(update.Event, event.Type)
+	update.Repository = firstNonEmpty(update.Repository, metadata.Repo)
+	update.SHA = firstNonEmpty(update.SHA, metadata.SHA)
+	if update.ObservedAt.IsZero() {
+		update.ObservedAt = r.now()
+	}
+	r.Observer.ObserveJob(update)
+}
+
 func JobConfigFromEnv(getenv func(string) string) JobConfig {
 	ttl := defaultTTL
 	backoff := defaultBackoff
 
 	config := JobConfig{
-		Namespace:          firstNonEmpty(getenv("RUNNER_JOB_NAMESPACE"), defaultNamespace),
-		Image:              firstNonEmpty(getenv("RUNNER_JOB_IMAGE"), defaultImage),
-		Repo:               strings.TrimSpace(getenv("RUNNER_REPO")),
-		SHA:                strings.TrimSpace(getenv("RUNNER_SHA")),
-		Command:            strings.Fields(getenv("RUNNER_JOB_COMMAND")),
-		TTLSecondsFinished: &ttl,
-		BackoffLimit:       &backoff,
-		ServiceAccountName: strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
+		Namespace:           firstNonEmpty(getenv("RUNNER_JOB_NAMESPACE"), defaultNamespace),
+		Image:               firstNonEmpty(getenv("RUNNER_JOB_IMAGE"), defaultImage),
+		Repo:                strings.TrimSpace(getenv("RUNNER_REPO")),
+		SHA:                 strings.TrimSpace(getenv("RUNNER_SHA")),
+		Command:             parseRunnerCommand(getenv("RUNNER_JOB_COMMAND")),
+		CommandByEvent:      eventCommandOverrides(getenv),
+		CommandByRepository: repositoryCommandOverrides(getenv("RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES")),
+		GitHubCommentMode:   githubCommentMode(getenv("NOVA_SRE_GITHUB_COMMENT_MODE")),
+		TTLSecondsFinished:  &ttl,
+		BackoffLimit:        &backoff,
+		ServiceAccountName:  strings.TrimSpace(getenv("RUNNER_JOB_SERVICE_ACCOUNT")),
+		Resources:           runnerResourceRequirements(getenv),
 	}
 
 	if raw := strings.TrimSpace(getenv("RUNNER_JOB_TTL_SECONDS")); raw != "" {
@@ -507,16 +665,11 @@ func BuildGitHubEventJob(config JobConfig, event Event) (*batchv1.Job, error) {
 	}
 
 	container := corev1.Container{
-		Name:    "runner",
-		Image:   config.Image,
-		Command: append([]string(nil), config.Command...),
-		Env: []corev1.EnvVar{
-			{Name: "GITHUB_EVENT_NAME", Value: event.Type},
-			{Name: "GITHUB_DELIVERY_ID", Value: event.DeliveryID},
-			{Name: "GITHUB_REPOSITORY", Value: config.Repo},
-			{Name: "GITHUB_SHA", Value: config.SHA},
-			{Name: "GITHUB_EVENT_PAYLOAD", Value: string(event.Body)},
-		},
+		Name:      "runner",
+		Image:     config.Image,
+		Command:   config.commandForEvent(event.Type, config.Repo),
+		Resources: *config.Resources.DeepCopy(),
+		Env:       githubContextEnv(event, config, metadata),
 	}
 
 	return &batchv1.Job{
@@ -561,19 +714,143 @@ func (c JobConfig) withDefaults(metadata payloadMetadata) JobConfig {
 		backoff := defaultBackoff
 		c.BackoffLimit = &backoff
 	}
+	if len(c.Resources.Requests) == 0 && len(c.Resources.Limits) == 0 {
+		c.Resources = runnerResourceRequirements(nil)
+	}
+	if c.CommandByEvent == nil {
+		c.CommandByEvent = map[string][]string{}
+	}
+	if c.CommandByRepository == nil {
+		c.CommandByRepository = map[string][]string{}
+	}
+	c.GitHubCommentMode = githubCommentMode(c.GitHubCommentMode)
 
 	return c
+}
+
+func (c JobConfig) commandForEvent(event string, repository string) []string {
+	event = strings.ToLower(strings.TrimSpace(event))
+	if len(c.CommandByEvent) > 0 {
+		if command := c.CommandByEvent[event]; len(command) > 0 {
+			return append([]string(nil), command...)
+		}
+	}
+	repository = normalizeRepository(repository)
+	if len(c.CommandByRepository) > 0 {
+		if command := c.CommandByRepository[repository]; len(command) > 0 {
+			return append([]string(nil), command...)
+		}
+	}
+	return append([]string(nil), c.Command...)
+}
+
+func parseRunnerCommand(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	const shellPrefix = "/bin/sh -c "
+	if strings.HasPrefix(raw, shellPrefix) {
+		return []string{"/bin/sh", "-c", strings.TrimSpace(raw[len(shellPrefix):])}
+	}
+	return strings.Fields(raw)
+}
+
+func eventCommandOverrides(getenv func(string) string) map[string][]string {
+	overrides := map[string][]string{}
+	for _, event := range []string{"push", "pull_request", "workflow_run"} {
+		name := "RUNNER_JOB_COMMAND_" + strings.ToUpper(strings.ReplaceAll(event, "-", "_"))
+		command := parseRunnerCommand(getenv(name))
+		if len(command) > 0 {
+			overrides[event] = command
+		}
+	}
+	return overrides
+}
+
+func repositoryCommandOverrides(raw string) map[string][]string {
+	overrides := map[string][]string{}
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == ';'
+	}) {
+		repository, commandText, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		command := parseRunnerCommand(commandText)
+		if len(command) > 0 {
+			overrides[normalizeRepository(repository)] = command
+		}
+	}
+	return overrides
+}
+
+func normalizeRepository(repository string) string {
+	return strings.ToLower(strings.TrimSpace(repository))
+}
+
+func githubCommentMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "create":
+		return "create"
+	default:
+		return "upsert"
+	}
+}
+
+func runnerResourceRequirements(getenv func(string) string) corev1.ResourceRequirements {
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resourceQuantity(getenv("RUNNER_JOB_CPU_REQUEST"), defaultRunnerCPURequest),
+			corev1.ResourceMemory: resourceQuantity(getenv("RUNNER_JOB_MEMORY_REQUEST"), defaultRunnerMemoryRequest),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resourceQuantity(getenv("RUNNER_JOB_CPU_LIMIT"), defaultRunnerCPULimit),
+			corev1.ResourceMemory: resourceQuantity(getenv("RUNNER_JOB_MEMORY_LIMIT"), defaultRunnerMemoryLimit),
+		},
+	}
+}
+
+func resourceQuantity(raw string, fallback string) resource.Quantity {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		value = fallback
+	}
+	quantity, err := resource.ParseQuantity(value)
+	if err != nil {
+		return resource.MustParse(fallback)
+	}
+	return quantity
 }
 
 type payloadMetadata struct {
 	Repo        string
 	SHA         string
+	Action      string
+	Ref         string
+	Before      string
 	PullRequest PullRequestMetadata
+	WorkflowRun WorkflowRunMetadata
 	EventTime   time.Time
+}
+
+type WorkflowRunMetadata struct {
+	ID         int64
+	Name       string
+	URL        string
+	Status     string
+	Conclusion string
+	Attempt    int
 }
 
 func githubPayloadMetadata(body []byte) payloadMetadata {
 	var payload struct {
+		Action     string `json:"action"`
+		Ref        string `json:"ref"`
+		Before     string `json:"before"`
 		After      string `json:"after"`
 		HeadCommit struct {
 			ID        string `json:"id"`
@@ -599,6 +876,12 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			} `json:"base"`
 		} `json:"pull_request"`
 		WorkflowRun struct {
+			ID           int64  `json:"id"`
+			Name         string `json:"name"`
+			HTMLURL      string `json:"html_url"`
+			Status       string `json:"status"`
+			Conclusion   string `json:"conclusion"`
+			RunAttempt   int    `json:"run_attempt"`
 			HeadSHA      string `json:"head_sha"`
 			CreatedAt    string `json:"created_at"`
 			UpdatedAt    string `json:"updated_at"`
@@ -619,13 +902,24 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 	}
 
 	return payloadMetadata{
-		Repo: firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName),
-		SHA:  firstNonEmpty(payload.HeadCommit.ID, payload.After, payload.PullRequest.Head.SHA, payload.WorkflowRun.HeadSHA),
+		Repo:   firstNonEmpty(payload.Repository.FullName, payload.PullRequest.Head.Repo.FullName, payload.WorkflowRun.Repository.FullName),
+		SHA:    firstNonEmpty(payload.HeadCommit.ID, payload.After, payload.PullRequest.Head.SHA, payload.WorkflowRun.HeadSHA),
+		Action: payload.Action,
+		Ref:    payload.Ref,
+		Before: payload.Before,
 		PullRequest: PullRequestMetadata{
 			Number: payload.PullRequest.Number,
 			URL:    payload.PullRequest.HTMLURL,
 			Head:   payload.PullRequest.Head.Ref,
 			Base:   payload.PullRequest.Base.Ref,
+		},
+		WorkflowRun: WorkflowRunMetadata{
+			ID:         payload.WorkflowRun.ID,
+			Name:       payload.WorkflowRun.Name,
+			URL:        payload.WorkflowRun.HTMLURL,
+			Status:     payload.WorkflowRun.Status,
+			Conclusion: payload.WorkflowRun.Conclusion,
+			Attempt:    payload.WorkflowRun.RunAttempt,
 		},
 		EventTime: firstTime(
 			payload.WorkflowRun.RunStartedAt,
@@ -640,6 +934,44 @@ func githubPayloadMetadata(body []byte) payloadMetadata {
 			payload.CheckRun.CompletedAt,
 		),
 	}
+}
+
+func githubContextEnv(event Event, config JobConfig, metadata payloadMetadata) []corev1.EnvVar {
+	env := []corev1.EnvVar{
+		{Name: "GITHUB_EVENT_NAME", Value: event.Type},
+		{Name: "GITHUB_DELIVERY_ID", Value: event.DeliveryID},
+		{Name: "GITHUB_REPOSITORY", Value: config.Repo},
+		{Name: "GITHUB_SHA", Value: config.SHA},
+		{Name: "GITHUB_EVENT_PAYLOAD", Value: string(event.Body)},
+	}
+	env = appendOptionalEnv(env, "GITHUB_ACTION", metadata.Action)
+	env = appendOptionalEnv(env, "GITHUB_REF", metadata.Ref)
+	env = appendOptionalEnv(env, "GITHUB_BEFORE", metadata.Before)
+	if metadata.PullRequest.Number > 0 {
+		env = appendOptionalEnv(env, "GITHUB_PR_NUMBER", strconv.Itoa(metadata.PullRequest.Number))
+	}
+	env = appendOptionalEnv(env, "GITHUB_PR_URL", metadata.PullRequest.URL)
+	env = appendOptionalEnv(env, "GITHUB_HEAD_REF", metadata.PullRequest.Head)
+	env = appendOptionalEnv(env, "GITHUB_BASE_REF", metadata.PullRequest.Base)
+	if metadata.WorkflowRun.ID > 0 {
+		env = appendOptionalEnv(env, "GITHUB_WORKFLOW_RUN_ID", strconv.FormatInt(metadata.WorkflowRun.ID, 10))
+	}
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_NAME", metadata.WorkflowRun.Name)
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_RUN_URL", metadata.WorkflowRun.URL)
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_STATUS", metadata.WorkflowRun.Status)
+	env = appendOptionalEnv(env, "GITHUB_WORKFLOW_CONCLUSION", metadata.WorkflowRun.Conclusion)
+	if metadata.WorkflowRun.Attempt > 0 {
+		env = appendOptionalEnv(env, "GITHUB_WORKFLOW_RUN_ATTEMPT", strconv.Itoa(metadata.WorkflowRun.Attempt))
+	}
+	return env
+}
+
+func appendOptionalEnv(env []corev1.EnvVar, name string, value string) []corev1.EnvVar {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return env
+	}
+	return append(env, corev1.EnvVar{Name: name, Value: value})
 }
 
 func jobResult(job *batchv1.Job) (JobResult, bool) {

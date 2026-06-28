@@ -1,4 +1,7 @@
-from fastapi import FastAPI
+import hmac
+import os
+
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.clients.github_comments import GitHubPullRequestCommentClient
 from app.graph.diagnosis_graph import build_graph
@@ -19,8 +22,25 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+async def require_agent_token(
+    x_nova_sre_agent_token: str | None = Header(default=None),
+) -> None:
+    expected = os.getenv("NOVA_SRE_AGENT_TOKEN", "").strip()
+    if not expected:
+        return
+    candidate = (x_nova_sre_agent_token or "").strip()
+    if not candidate or not hmac.compare_digest(candidate, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="unauthorized",
+        )
+
+
 @app.post("/diagnose", response_model=DiagnosisResponse)
-async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
+async def diagnose(
+    request: DiagnosisRequest,
+    _agent_token: None = Depends(require_agent_token),
+) -> DiagnosisResponse:
     result = diagnosis_graph.invoke(request.to_state_input())
     state = DiagnosisState.model_validate(result)
     should_handle_github_comment = request.post_github_comment or _has_pr_metadata(state)
@@ -31,15 +51,18 @@ async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
                 repo=state.github_repo,
                 pr_number=state.github_pr_number,
                 body=state.pr_comment,
+                mode=request.github_comment_mode,
             )
             state.github_comment_posted = comment_result.posted
             state.github_comment_url = comment_result.url
             state.github_comment_error = comment_result.error
+            state.github_comment_action = comment_result.action
         else:
             state.github_comment_error = (
                 "GitHub PR comment posting requires github_owner, github_repo, and "
                 "github_pr_number."
             )
+            state.github_comment_action = "skipped"
 
     diagnosis_result = build_diagnosis_result(state)
     return DiagnosisResponse(
@@ -59,8 +82,9 @@ async def diagnose(request: DiagnosisRequest) -> DiagnosisResponse:
         github_comment_posted=state.github_comment_posted,
         github_comment_url=state.github_comment_url,
         github_comment_error=state.github_comment_error,
+        github_comment_action=state.github_comment_action,
     )
 
 
 def _has_pr_metadata(state: DiagnosisState) -> bool:
-    return bool(state.github_owner or state.github_repo or state.github_pr_number)
+    return bool(state.github_owner and state.github_repo and state.github_pr_number)

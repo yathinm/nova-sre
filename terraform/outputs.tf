@@ -38,6 +38,12 @@ output "grafana_service_name" {
   value       = helm_release.grafana.name
 }
 
+output "grafana_admin_password" {
+  description = "Grafana admin password generated or supplied for the local Grafana release"
+  value       = local.grafana_admin_password
+  sensitive   = true
+}
+
 output "grafana_port_forward_command" {
   description = "Local command to forward Grafana to http://localhost:3000"
   value       = "kubectl --context ${var.minikube_profile} -n ${kubernetes_namespace.observability.metadata[0].name} port-forward svc/${helm_release.grafana.name} 3000:80"

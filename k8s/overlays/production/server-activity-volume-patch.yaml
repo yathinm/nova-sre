@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nova-sre-server
+  namespace: nova-sre
+spec:
+  template:
+    spec:
+      volumes:
+        - name: activity-store
+          persistentVolumeClaim:
+            claimName: nova-sre-activity-store

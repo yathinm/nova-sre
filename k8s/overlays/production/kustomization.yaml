@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nova-sre
+resources:
+  - ../../base
+  - ../../rbac
+  - activity-pvc.yaml
+  - ingress.yaml
+patches:
+  - path: server-activity-volume-patch.yaml
+    target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: nova-sre-server
+images:
+  - name: nova-sre-server
+    newName: registry.example.com/nova-sre/server
+    newTag: replace-with-release-tag
+  - name: nova-sre-agent
+    newName: registry.example.com/nova-sre/agent
+    newTag: replace-with-release-tag
+  - name: nova-sre-frontend
+    newName: registry.example.com/nova-sre/frontend
+    newTag: replace-with-release-tag

@@ -1,5 +1,4 @@
 # Helm values for the local Minikube Grafana release.
-adminPassword: admin
 service:
   type: ClusterIP
 persistence:

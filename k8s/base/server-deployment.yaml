@@ -16,10 +16,24 @@ spec:
         app: nova-sre-server
     spec:
       serviceAccountName: nova-sre-server
+      securityContext:
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: server
           image: nova-sre-server:local
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
           env:
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
@@ -31,10 +45,62 @@ spec:
                 secretKeyRef:
                   name: nova-sre-secrets
                   key: GITHUB_TOKEN
+            - name: NOVA_SRE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_API_TOKEN
+                  optional: true
+            - name: NOVA_SRE_ALLOWED_ORIGINS
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_ALLOWED_ORIGINS
+                  optional: true
             - name: NOVA_SRE_AGENT_URL
               value: http://nova-sre-agent.nova-sre.svc.cluster.local:8000
+            - name: NOVA_SRE_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_AGENT_TOKEN
+                  optional: true
+            - name: NOVA_SRE_GITHUB_COMMENT_MODE
+              value: upsert
+            - name: RUNNER_JOB_TTL_SECONDS
+              value: "900"
+            - name: RUNNER_JOB_IMAGE
+              value: golang:1.25-alpine
+            - name: RUNNER_JOB_MEMORY_REQUEST
+              value: "256Mi"
+            - name: RUNNER_JOB_MEMORY_LIMIT
+              value: "512Mi"
+            - name: RUNNER_JOB_COMMAND_PULL_REQUEST
+              value: >-
+                /bin/sh -c set -eu; apk add --no-cache git; git clone --filter=blob:none --no-checkout "https://github.com/${GITHUB_REPOSITORY}.git" /src; cd /src; git checkout "${GITHUB_SHA}"; cd server-go; go test ./...
+            # Optional event-specific runner commands are supported through
+            # RUNNER_JOB_COMMAND_PUSH, RUNNER_JOB_COMMAND_PULL_REQUEST, and
+            # RUNNER_JOB_COMMAND_WORKFLOW_RUN.
+            # Optional repository-specific commands are supported through
+            # RUNNER_JOB_COMMAND_REPOSITORY_OVERRIDES with owner/repo=command
+            # entries separated by newlines or semicolons.
+            - name: NOVA_SRE_ACTIVITY_LIMIT
+              value: "200"
+            - name: NOVA_SRE_ACTIVITY_STORE_PATH
+              value: /var/lib/nova-sre/activity.json
+            - name: NOVA_SRE_DELIVERY_CACHE_TTL
+              value: "15m"
+            - name: NOVA_SRE_RUNNER_LOG_LIMIT_BYTES
+              value: "65536"
           ports:
             - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
           readinessProbe:
             httpGet:
               path: /healthz
@@ -47,3 +113,9 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+          volumeMounts:
+            - name: activity-store
+              mountPath: /var/lib/nova-sre
+      volumes:
+        - name: activity-store
+          emptyDir: {}

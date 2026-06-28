@@ -4,9 +4,11 @@ on:
   pull_request:
     branches:
       - main
+      - dev
   push:
     branches:
       - main
+      - dev
 
 permissions:
   contents: read
@@ -20,9 +22,14 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     outputs:
+      all-changes: ${{ steps.filter.outputs.all-changes }}
       server-go: ${{ steps.filter.outputs.server-go }}
       agent-python: ${{ steps.filter.outputs.agent-python }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+      docker: ${{ steps.filter.outputs.docker }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,6 +39,8 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           filters: |
+            all-changes:
+              - '**'
             server-go:
               - '.github/workflows/ci.yml'
               - 'server-go/**'
@@ -43,6 +52,25 @@ jobs:
             frontend:
               - '.github/workflows/ci.yml'
               - 'frontend/**'
+            k8s:
+              - '.github/workflows/ci.yml'
+              - 'k8s/**'
+              - 'Makefile'
+            terraform:
+              - '.github/workflows/ci.yml'
+              - 'terraform/**'
+              - 'dashboards/**'
+              - 'Makefile'
+            docker:
+              - '.github/workflows/ci.yml'
+              - 'server-go/**'
+              - 'agent-python/**'
+              - 'frontend/**'
+              - 'Makefile'
+            scripts:
+              - '.github/workflows/ci.yml'
+              - 'scripts/**'
+              - 'Makefile'
 
   server-go:
     name: Go tests
@@ -59,11 +87,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          go-version: '1.25.x'
           cache-dependency-path: server-go/go.sum
 
       - name: Run tests
         run: go test ./...
+
+      - name: Run vet
+        run: go vet ./...
+
+      - name: Run vulnerability check
+        run: make audit-go
+        working-directory: ${{ github.workspace }}
 
   agent-python:
     name: Python agent tests
@@ -90,6 +125,9 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Run lint
+        run: python -m ruff check .
+
   frontend:
     name: Frontend build
     needs: changes
@@ -112,5 +150,89 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit dependencies
+        run: make audit-frontend
+        working-directory: ${{ github.workspace }}
+
+      - name: Run smoke tests
+        run: npm test
+
       - name: Build
         run: npm run build
+
+  k8s:
+    name: Kubernetes manifests
+    needs: changes
+    if: needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate manifests
+        run: make KUBECTL_VALIDATE=false validate-k8s
+
+      - name: Validate production overlay
+        run: make validate-production-k8s
+
+  terraform:
+    name: Terraform validation
+    needs: changes
+    if: needs.changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Validate Terraform
+        run: make tf-validate
+
+      - name: Validate observability wiring
+        run: make validate-observability-config
+
+  docker:
+    name: Docker image builds
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build application images
+        run: make docker-build-ci
+
+  scripts:
+    name: Script validation
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate helper scripts
+        run: make validate-scripts
+
+      - name: Validate release tooling
+        run: make validate-release-tools
+
+  secrets:
+    name: Secret scan
+    needs: changes
+    if: needs.changes.outputs.all-changes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan tracked files for committed secrets
+        run: make validate-secrets

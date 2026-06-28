@@ -2,6 +2,12 @@
 
 locals {
   observability_namespace = "observability"
+  grafana_admin_password  = coalesce(var.grafana_admin_password, random_password.grafana_admin.result)
+}
+
+resource "random_password" "grafana_admin" {
+  length  = 24
+  special = true
 }
 
 resource "kubernetes_namespace" "observability" {
@@ -35,6 +41,9 @@ resource "helm_release" "grafana" {
 
   values = [
     file("${path.module}/grafana-values.yaml"),
+    yamlencode({
+      adminPassword = local.grafana_admin_password
+    }),
   ]
 }
 

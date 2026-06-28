@@ -1,7 +1,15 @@
+import os
 from datetime import datetime
-from typing import Any
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
+
+from app.clients.github_comments import GitHubCommentAction, GitHubCommentMode
+
+
+DEFAULT_MAX_NORMALIZED_LOG_CHARS = 20_000
+MAX_LOG_CHARS_ENV = "NOVA_SRE_MAX_LOG_CHARS"
+TRUNCATED_LOG_NOTICE = "[Nova-SRE truncated the submitted logs to fit the diagnosis limit]"
 
 
 class LogEntry(BaseModel):
@@ -82,6 +90,7 @@ class DiagnosisState(BaseModel):
     github_comment_posted: bool = False
     github_comment_url: str | None = None
     github_comment_error: str | None = None
+    github_comment_action: GitHubCommentAction = "skipped"
 
 
 class DiagnosisRequest(BaseModel):
@@ -98,17 +107,20 @@ class DiagnosisRequest(BaseModel):
     message: str | None = None
     pull_request: PullRequestMetadata | None = None
     observed_time: datetime | None = None
-    webhook_body: dict[str, Any] | list[Any] | str | None = None
     github_owner: str | None = Field(default=None, min_length=1)
     github_repo: str | None = Field(default=None, min_length=1)
     github_pr_number: int | None = Field(default=None, gt=0)
     post_github_comment: bool = False
+    github_comment_mode: GitHubCommentMode = "upsert"
 
     def to_state_input(self) -> dict:
         repo = self.repo or self.repository or _repo_from_github_metadata(self)
         run_id = self.run_id or self.delivery_id or self.job_name or "unknown-run"
         pull_request = self.pull_request
         github_pr_number = self.github_pr_number or (pull_request.number if pull_request else None)
+        inferred_owner, inferred_repo = _github_repository_parts(repo, pull_request)
+        github_owner = self.github_owner or inferred_owner
+        github_repo = self.github_repo or inferred_repo
 
         return {
             "run_id": run_id,
@@ -123,8 +135,8 @@ class DiagnosisRequest(BaseModel):
             "message": self.message,
             "pull_request": pull_request,
             "observed_time": self.observed_time,
-            "github_owner": self.github_owner,
-            "github_repo": self.github_repo,
+            "github_owner": github_owner,
+            "github_repo": github_repo,
             "github_pr_number": github_pr_number,
         }
 
@@ -146,6 +158,7 @@ class DiagnosisResponse(BaseModel):
     github_comment_posted: bool = False
     github_comment_url: str | None = None
     github_comment_error: str | None = None
+    github_comment_action: GitHubCommentAction = "skipped"
 
 
 def build_diagnosis_result(state: DiagnosisState) -> DiagnosisResult:
@@ -181,7 +194,7 @@ def build_diagnosis_result(state: DiagnosisState) -> DiagnosisResult:
 
 def _normalize_logs(logs: str | list[LogEntry]) -> str:
     if isinstance(logs, str):
-        return logs
+        return _truncate_logs(logs)
 
     blocks: list[str] = []
     for entry in logs:
@@ -191,13 +204,69 @@ def _normalize_logs(logs: str | list[LogEntry]) -> str:
             blocks.extend(f"{prefix}{line}" for line in entry.logs.splitlines() if line.strip())
         if entry.error:
             blocks.append(f"{prefix}ERROR collecting logs: {entry.error}")
-    return "\n".join(blocks)
+    return _truncate_logs("\n".join(blocks))
+
+
+def _truncate_logs(logs: str) -> str:
+    max_chars = _max_normalized_log_chars()
+    if len(logs) <= max_chars:
+        return logs
+
+    notice = f"\n{TRUNCATED_LOG_NOTICE}\n"
+    if max_chars <= len(notice) + 2:
+        return notice.strip()[:max_chars]
+
+    remaining = max_chars - len(notice)
+    head_chars = remaining // 2
+    tail_chars = remaining - head_chars
+    return f"{logs[:head_chars]}{notice}{logs[-tail_chars:]}"
+
+
+def _max_normalized_log_chars() -> int:
+    raw = os.getenv(MAX_LOG_CHARS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_NORMALIZED_LOG_CHARS
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_NORMALIZED_LOG_CHARS
+    return parsed if parsed > 0 else DEFAULT_MAX_NORMALIZED_LOG_CHARS
 
 
 def _repo_from_github_metadata(request: DiagnosisRequest) -> str | None:
     if request.github_owner and request.github_repo:
         return f"{request.github_owner}/{request.github_repo}"
     return None
+
+
+def _github_repository_parts(
+    repo: str | None,
+    pull_request: PullRequestMetadata | None,
+) -> tuple[str | None, str | None]:
+    if repo_parts := _split_github_repository(repo):
+        return repo_parts
+    if pull_request and pull_request.url:
+        return _github_repository_parts_from_url(pull_request.url)
+    return None, None
+
+
+def _split_github_repository(repo: str | None) -> tuple[str, str] | None:
+    if not repo:
+        return None
+    parts = [part.strip() for part in repo.strip().split("/")]
+    if len(parts) != 2 or not all(parts):
+        return None
+    return parts[0], parts[1]
+
+
+def _github_repository_parts_from_url(url: str) -> tuple[str | None, str | None]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != "github.com":
+        return None, None
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if len(path_parts) >= 4 and path_parts[2] == "pull":
+        return path_parts[0], path_parts[1]
+    return None, None
 
 
 def _diagnosis_status(state: DiagnosisState) -> str:

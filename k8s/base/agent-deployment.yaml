@@ -15,11 +15,34 @@ spec:
       labels:
         app: nova-sre-agent
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent
           image: nova-sre-agent:local
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
           env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: NOVA_SRE_MAX_LOG_CHARS
+              value: "20000"
+            - name: NOVA_SRE_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_AGENT_TOKEN
+                  optional: true
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -32,6 +55,13 @@ spec:
                   key: GITHUB_TOKEN
           ports:
             - containerPort: 8000
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
           readinessProbe:
             httpGet:
               path: /healthz

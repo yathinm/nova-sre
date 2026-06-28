@@ -19,13 +19,14 @@ contains:
   account, RBAC, and ClusterIP services.
 - Terraform provider wiring for the `nova-sre` Minikube context.
 - Terraform-managed Helm releases for Prometheus and Grafana.
-- A Go server with `GET /healthz`, `GET /metrics`, `GET /api/events`,
-  `GET /api/jobs`, and `POST /webhook`.
+- A Go server with `GET /healthz`, `GET /metrics`, `GET /api/config`,
+  `GET /api/summary`, `GET /api/events`, `GET /api/jobs`, and `POST /webhook`.
 - Prometheus counters, gauges, and histograms for pipeline jobs.
 
-The next local milestone is validating the deployed server, runner jobs, agent
-traffic, Prometheus scrape target, and Grafana dashboard together with real
-GitHub webhook traffic.
+The deployed server, runner jobs, agent traffic, Prometheus scrape target, and
+Grafana dashboard now have validation commands. See
+[project-status.md](project-status.md) for the current completion snapshot and
+remaining MVP work.
 
 ## Install Prometheus and Grafana
 
@@ -41,6 +42,7 @@ Install the Terraform-managed observability stack:
 
 ```sh
 make tf-init
+make tf-plan
 make tf-apply
 ```
 
@@ -49,6 +51,19 @@ Terraform creates the `observability` namespace and installs:
 - Prometheus from the `prometheus-community/prometheus` Helm chart.
 - Grafana from the `grafana/grafana` Helm chart.
 - A Grafana dashboard ConfigMap for `dashboards/pipeline-stats.json`.
+
+If Prometheus, Grafana, or the dashboard ConfigMap already exist in Minikube but
+your checkout has no local Terraform state, adopt those resources before applying:
+
+```sh
+make tf-import-observability
+make tf-plan
+```
+
+Only run `make tf-apply` after the plan no longer proposes recreating the existing
+observability namespace, Helm releases, or dashboard ConfigMap. In-place Helm
+release updates after import are expected when Terraform is reconciling the
+checked-in values files with the release metadata it just adopted.
 
 Confirm the pods and services exist:
 
@@ -61,6 +76,19 @@ The expected service names are:
 
 - `prometheus-server`
 - `grafana`
+
+Validate the checked-in Prometheus, Grafana, Terraform, and dashboard wiring:
+
+```sh
+make validate-observability-config
+```
+
+When Prometheus is port-forwarded, the same command can also verify the live
+scrape target:
+
+```sh
+PROMETHEUS_BASE_URL=http://localhost:9090 make validate-observability-config
+```
 
 ## Port-Forward the Stack
 
@@ -82,8 +110,17 @@ make port-forward-grafana
 
 Open Grafana at `http://localhost:3000`.
 
-The local Grafana Helm values set the admin password to `admin` in
-`terraform/grafana-values.yaml`. The Nova-SRE Pipeline Stats dashboard is
+Terraform generates the local Grafana admin password by default. Retrieve it only
+when you need to sign in:
+
+```sh
+cd terraform
+terraform output -raw grafana_admin_password
+```
+
+To supply your own local password instead, set the sensitive
+`grafana_admin_password` Terraform variable with `TF_VAR_grafana_admin_password`
+or a local untracked `.tfvars` file. The Nova-SRE Pipeline Stats dashboard is
 provisioned automatically from `dashboards/pipeline-stats.json`.
 
 ## Validate the Server Metrics Endpoint

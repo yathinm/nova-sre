@@ -15,24 +15,52 @@ spec:
       labels:
         app: nova-sre-frontend
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 101
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: frontend
           image: nova-sre-frontend:local
           imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
           env:
             - name: NOVA_SRE_API_BASE
               value: http://localhost:8080
           ports:
-            - containerPort: 80
+            - containerPort: 8080
+          volumeMounts:
+            - name: frontend-tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
           readinessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             initialDelaySeconds: 3
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+      volumes:
+        - name: frontend-tmp
+          emptyDir: {}

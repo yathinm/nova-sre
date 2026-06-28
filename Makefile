@@ -1,9 +1,13 @@
 PROFILE=nova-sre
+PYTHON ?= python3.11
+KUBECTL_VALIDATE ?= true
+GOVULNCHECK_VERSION ?= v1.5.0
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
-        tf-init tf-apply tf-destroy docker-env docker-build deploy-apps \
+        tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics run-server run-frontend all-local test-go lint-go test-agent lint-agent
+        set-production-images prepare-production-release sync-k8s-secret validate-secret-sync validate-metrics validate-api-cors validate-k8s validate-production-k8s validate-release-tools validate-release-command validate-scripts validate-secrets validate-cluster-runtime validate-observability-config validate-local-runtime validate-local-webhook validate-webhook-tunnel local-doctor local-up local-down local-status run-server run-frontend all-local \
+        test-go lint-go audit-go test-agent lint-agent audit-frontend audit-deps
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
 
@@ -35,11 +39,25 @@ dashboard: ## Open Minikube dashboard
 tf-init: ## Initialise Terraform
 	cd terraform && terraform init
 
+tf-validate: ## Validate Terraform formatting and configuration
+	cd terraform && terraform fmt -check
+	cd terraform && terraform init -backend=false
+	cd terraform && terraform validate
+
+tf-plan: ## Preview Terraform changes
+	cd terraform && terraform plan
+
 tf-apply: ## Terraform apply
 	cd terraform && terraform apply
 
 tf-destroy: ## Terraform destroy
 	cd terraform && terraform destroy
+
+tf-import-observability: ## Import existing local observability resources into Terraform state
+	cd terraform && terraform import kubernetes_namespace.observability observability
+	cd terraform && terraform import helm_release.prometheus observability/prometheus
+	cd terraform && terraform import helm_release.grafana observability/grafana
+	cd terraform && terraform import kubernetes_config_map.grafana_pipeline_dashboard observability/grafana-dashboard-nova-sre-pipeline
 
 # ── Docker (inside Minikube) ──────────────────────────────────────────────────
 
@@ -51,11 +69,20 @@ docker-build: ## Build images directly inside Minikube's Docker daemon
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-agent:local ./agent-python
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-frontend:local ./frontend
 
+docker-build-ci: ## Build images with the active Docker daemon for CI validation
+	docker build -t nova-sre-server:ci ./server-go
+	docker build -t nova-sre-agent:ci ./agent-python
+	docker build -t nova-sre-frontend:ci ./frontend
+
 # ── Kubernetes ────────────────────────────────────────────────────────────────
 
 deploy-apps: ## Apply RBAC and base manifests
-	kubectl apply -f k8s/rbac/
-	kubectl apply -f k8s/base/
+	kubectl apply -k k8s/rbac
+	kubectl apply -k k8s/base
+	kubectl rollout restart deployment/nova-sre-server deployment/nova-sre-agent deployment/nova-sre-frontend -n nova-sre
+	kubectl rollout status deployment/nova-sre-server -n nova-sre --timeout=120s
+	kubectl rollout status deployment/nova-sre-agent -n nova-sre --timeout=120s
+	kubectl rollout status deployment/nova-sre-frontend -n nova-sre --timeout=120s
 
 # ── Port-forwards ─────────────────────────────────────────────────────────────
 
@@ -77,6 +104,91 @@ port-forward-grafana: ## Forward Grafana → localhost:3000
 validate-metrics: ## Verify the port-forwarded Go server exposes Prometheus metrics
 	curl -fsS http://localhost:8080/metrics | grep -E 'go_gc_duration_seconds|pipeline_jobs_total'
 
+validate-api-cors: ## Verify browser-readable Go API endpoints include CORS headers
+	@for path in /healthz /metrics /api/config; do \
+		echo "Checking $$path"; \
+		curl -fsS -D - -o /dev/null -H 'Origin: http://localhost:8081' "http://localhost:8080$$path" | grep -i '^Access-Control-Allow-Origin:'; \
+	done
+
+validate-k8s: ## Validate Kubernetes app manifests client-side
+ifeq ($(KUBECTL_VALIDATE),false)
+	ruby scripts/validate-k8s-yaml.rb
+else
+	kubectl apply --dry-run=client --validate=true -k k8s/rbac
+	kubectl apply --dry-run=client --validate=true -k k8s/base
+	kubectl apply --dry-run=client --validate=true -k k8s/overlays/production
+	$(MAKE) validate-production-k8s
+endif
+
+validate-production-k8s: ## Validate production overlay security-sensitive wiring
+	ruby scripts/validate-production-k8s.rb
+
+set-production-images: ## Stamp production overlay images with RELEASE_TAG and optional PRODUCTION_IMAGE_REGISTRY
+	ruby scripts/set-production-images.rb
+
+prepare-production-release: ## Stamp production images and run release preflight checks
+	ruby scripts/prepare-production-release.rb
+
+sync-k8s-secret: ## Apply nova-sre-secrets from exported environment variables
+	ruby scripts/sync-k8s-secret.rb
+
+validate-secret-sync: ## Validate the Kubernetes secret sync helper
+	ruby scripts/validate-secret-sync.rb
+
+validate-release-tools: ## Validate release helper scripts
+	ruby scripts/validate-release-tools.rb
+
+validate-release-command: ## Validate the production release preflight command
+	ruby scripts/validate-release-command.rb
+
+validate-scripts: ## Validate repository Ruby helper scripts
+	ruby -c scripts/validate-k8s-yaml.rb
+	ruby -c scripts/validate-production-k8s.rb
+	ruby -c scripts/set-production-images.rb
+	ruby -c scripts/prepare-production-release.rb
+	ruby -c scripts/sync-k8s-secret.rb
+	ruby -c scripts/validate-release-tools.rb
+	ruby -c scripts/validate-release-command.rb
+	ruby -c scripts/validate-secret-sync.rb
+	ruby -c scripts/validate-cluster-runtime.rb
+	ruby -c scripts/validate-local-runtime.rb
+	ruby -c scripts/validate-local-webhook.rb
+	ruby -c scripts/local-doctor.rb
+	ruby -c scripts/local-stack.rb
+	ruby -c scripts/validate-observability-config.rb
+	ruby -c scripts/validate-secrets.rb
+	ruby -c scripts/validate-webhook-tunnel.rb
+
+validate-cluster-runtime: ## Validate live Kubernetes deployments, services, and agent auth
+	ruby scripts/validate-cluster-runtime.rb
+
+validate-secrets: ## Check tracked files for real-looking committed secrets
+	ruby scripts/validate-secrets.rb
+
+validate-observability-config: ## Validate Prometheus, Grafana, and dashboard wiring
+	ruby scripts/validate-observability-config.rb
+
+validate-local-runtime: ## Validate local API and frontend port-forwards
+	ruby scripts/validate-local-runtime.rb
+
+validate-local-webhook: ## Send a signed local webhook ping and confirm activity
+	ruby scripts/validate-local-webhook.rb
+
+validate-webhook-tunnel: ## Validate a public webhook tunnel; set WEBHOOK_BASE_URL and optionally GITHUB_WEBHOOK_SECRET
+	ruby scripts/validate-webhook-tunnel.rb
+
+local-doctor: ## Check local dependencies for the Minikube app loop
+	ruby scripts/local-doctor.rb
+
+local-up: ## Build, deploy, port-forward, and validate the local app stack
+	ruby scripts/local-stack.rb up
+
+local-down: ## Stop local app port-forwards started by local-up
+	ruby scripts/local-stack.rb down
+
+local-status: ## Show local app port-forward status
+	ruby scripts/local-stack.rb status
+
 # ── Local control panel demo ──────────────────────────────────────────────────
 
 run-server: ## Run the Go API locally on localhost:8080
@@ -84,6 +196,9 @@ run-server: ## Run the Go API locally on localhost:8080
 
 run-frontend: ## Run the React control panel locally on localhost:5173
 	cd frontend && npm run dev
+
+audit-frontend: ## Audit frontend dependencies for high severity vulnerabilities
+	cd frontend && npm audit --audit-level=high
 
 # ── Go server ─────────────────────────────────────────────────────────────────
 
@@ -93,14 +208,19 @@ test-go: ## Run Go unit tests
 lint-go: ## Lint Go source
 	cd server-go && go vet ./...
 
+audit-go: ## Audit Go dependencies and reachable symbols for known vulnerabilities
+	cd server-go && go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
 # ── Python agent ──────────────────────────────────────────────────────────────
 
 test-agent: ## Run Python agent tests
-	cd agent-python && python -m pytest
+	cd agent-python && $(PYTHON) -m pytest
 
 lint-agent: ## Lint Python agent source
-	cd agent-python && ruff check .
+	cd agent-python && $(PYTHON) -m ruff check .
 
 # ── Composite ─────────────────────────────────────────────────────────────────
+
+audit-deps: audit-go audit-frontend ## Audit Go and frontend dependencies
 
 all-local: cluster-create addons tf-init tf-apply docker-build deploy-apps ## Full local setup from scratch
