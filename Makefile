@@ -3,7 +3,7 @@ PYTHON ?= python3
 KUBECTL_VALIDATE ?= true
 
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
-        tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build deploy-apps \
+        tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
         validate-metrics validate-api-cors validate-k8s run-server run-frontend all-local test-go lint-go test-agent lint-agent
 
@@ -66,6 +66,11 @@ docker-build: ## Build images directly inside Minikube's Docker daemon
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-server:local ./server-go
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-agent:local ./agent-python
 	eval $$(minikube docker-env --profile $(PROFILE)) && docker build -t nova-sre-frontend:local ./frontend
+
+docker-build-ci: ## Build images with the active Docker daemon for CI validation
+	docker build -t nova-sre-server:ci ./server-go
+	docker build -t nova-sre-agent:ci ./agent-python
+	docker build -t nova-sre-frontend:ci ./frontend
 
 # ── Kubernetes ────────────────────────────────────────────────────────────────
 
