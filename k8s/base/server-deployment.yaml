@@ -57,6 +57,12 @@ spec:
                   optional: true
             - name: NOVA_SRE_AGENT_URL
               value: http://nova-sre-agent.nova-sre.svc.cluster.local:8000
+            - name: NOVA_SRE_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_AGENT_TOKEN
+                  optional: true
             - name: RUNNER_JOB_TTL_SECONDS
               value: "900"
             - name: NOVA_SRE_ACTIVITY_LIMIT

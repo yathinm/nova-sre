@@ -225,9 +225,10 @@ type HTTPAgentClient struct {
 	URL        string
 	HTTPClient *http.Client
 	Timeout    time.Duration
+	Token      string
 }
 
-func NewHTTPAgentClient(agentURL string, timeout time.Duration) (*HTTPAgentClient, error) {
+func NewHTTPAgentClient(agentURL string, timeout time.Duration, tokens ...string) (*HTTPAgentClient, error) {
 	agentURL = strings.TrimSpace(agentURL)
 	if agentURL == "" {
 		return nil, nil
@@ -247,6 +248,7 @@ func NewHTTPAgentClient(agentURL string, timeout time.Duration) (*HTTPAgentClien
 		URL:        parsed.String(),
 		HTTPClient: &http.Client{Timeout: timeout},
 		Timeout:    timeout,
+		Token:      firstString(tokens...),
 	}, nil
 }
 
@@ -275,6 +277,9 @@ func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest)
 		return fmt.Errorf("create diagnose request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if token := strings.TrimSpace(c.Token); token != "" {
+		req.Header.Set("X-Nova-SRE-Agent-Token", token)
+	}
 
 	client := c.HTTPClient
 	if client == nil {
@@ -291,6 +296,15 @@ func (c *HTTPAgentClient) Diagnose(ctx context.Context, request DiagnoseRequest)
 		return fmt.Errorf("diagnose request returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 type JobRunner struct {

@@ -10,6 +10,7 @@ kubectl create secret generic nova-sre-secrets \
   --from-literal=GITHUB_WEBHOOK_SECRET="$GITHUB_WEBHOOK_SECRET" \
   --from-literal=GITHUB_TOKEN="$GITHUB_TOKEN" \
   --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --from-literal=NOVA_SRE_AGENT_TOKEN="$NOVA_SRE_AGENT_TOKEN" \
   --from-literal=NOVA_SRE_ALLOWED_ORIGINS=http://localhost:8081
 ```
 
@@ -23,10 +24,20 @@ endpoints require either an `Authorization: Bearer <token>` header or an
 Add it with `kubectl edit secret nova-sre-secrets -n nova-sre` or recreate the
 secret with `--from-literal=NOVA_SRE_API_TOKEN="$NOVA_SRE_API_TOKEN"`.
 
+`NOVA_SRE_AGENT_TOKEN` is optional but recommended. When present, the Go server
+sends it to the Python agent on `/diagnose` requests and the agent rejects
+requests without the matching `X-Nova-SRE-Agent-Token` header. Generate a local
+value with a cryptographically secure random source such as:
+
+```sh
+openssl rand -hex 32
+```
+
 The server deployment also sets:
 
 ```sh
 NOVA_SRE_AGENT_URL=http://nova-sre-agent.nova-sre.svc.cluster.local:8000
+NOVA_SRE_AGENT_TOKEN=<from nova-sre-secrets when configured>
 RUNNER_JOB_TTL_SECONDS=900
 NOVA_SRE_ACTIVITY_LIMIT=200
 NOVA_SRE_DELIVERY_CACHE_TTL=15m

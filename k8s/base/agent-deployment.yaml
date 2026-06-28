@@ -37,6 +37,12 @@ spec:
               value: "1"
             - name: NOVA_SRE_MAX_LOG_CHARS
               value: "20000"
+            - name: NOVA_SRE_AGENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: nova-sre-secrets
+                  key: NOVA_SRE_AGENT_TOKEN
+                  optional: true
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
