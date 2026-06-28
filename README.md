@@ -217,6 +217,7 @@ The Makefile is the source of truth for local commands. It uses the Minikube pro
 | `make addons-ingress` | Enables the Minikube ingress addon. |
 | `make dashboard` | Opens the Minikube dashboard. |
 | `make tf-init` | Runs `terraform init` in `terraform/`. |
+| `make tf-validate` | Checks Terraform formatting and validates configuration. |
 | `make tf-plan` | Runs `terraform plan` in `terraform/`. |
 | `make tf-apply` | Runs `terraform apply` in `terraform/`. |
 | `make tf-destroy` | Runs `terraform destroy` in `terraform/`. |
