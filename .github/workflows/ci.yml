@@ -215,3 +215,6 @@ jobs:
 
       - name: Validate helper scripts
         run: make validate-scripts
+
+      - name: Scan tracked files for committed secrets
+        run: make validate-secrets

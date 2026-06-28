@@ -6,7 +6,7 @@ GOVULNCHECK_VERSION ?= v1.5.0
 .PHONY: cluster-create cluster-delete cluster-info addons addons-ingress dashboard \
         tf-init tf-validate tf-plan tf-apply tf-destroy tf-import-observability docker-env docker-build docker-build-ci deploy-apps \
         port-forward-server port-forward-agent port-forward-frontend port-forward-prometheus port-forward-grafana \
-        validate-metrics validate-api-cors validate-k8s validate-scripts validate-observability-config validate-local-runtime validate-webhook-tunnel run-server run-frontend all-local \
+        validate-metrics validate-api-cors validate-k8s validate-scripts validate-secrets validate-observability-config validate-local-runtime validate-webhook-tunnel run-server run-frontend all-local \
         test-go lint-go audit-go test-agent lint-agent audit-frontend audit-deps
 
 # ── Cluster lifecycle ──────────────────────────────────────────────────────────
@@ -121,7 +121,11 @@ validate-scripts: ## Validate repository Ruby helper scripts
 	ruby -c scripts/validate-k8s-yaml.rb
 	ruby -c scripts/validate-local-runtime.rb
 	ruby -c scripts/validate-observability-config.rb
+	ruby -c scripts/validate-secrets.rb
 	ruby -c scripts/validate-webhook-tunnel.rb
+
+validate-secrets: ## Check tracked files for real-looking committed secrets
+	ruby scripts/validate-secrets.rb
 
 validate-observability-config: ## Validate Prometheus, Grafana, and dashboard wiring
 	ruby scripts/validate-observability-config.rb
